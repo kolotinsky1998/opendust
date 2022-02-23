@@ -14,10 +14,10 @@ conda create -n opendust
 conda activate opendust
 ```
 ```
-conda install -c conda-forge opendust
+conda install -c kolotinsky opendust
 ```
 With recent conda versions (v4.8.4+), this will install a version of OpenDust compiled with the latest version of CUDA supported by your drivers. Alternatively you can request a version that is compiled for a specific CUDA version with the command
 ```
-conda install -c conda-forge opendust cudatoolkit=10.0
+conda install -c kolotinsky opendust cudatoolkit=10.0
 ```
 where `10.0` should be replaced with the particular CUDA version you want to target.
