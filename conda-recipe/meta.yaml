@@ -1,0 +1,25 @@
+channels:
+    - conda-forge
+    - omnia
+
+requirements:
+  build:
+    - pip
+    - python
+    - setuptools
+  run:
+    - openmm
+    - cupy
+    - unyt
+    - scipy
+
+build:
+  number: 0    
+
+source:
+  path: "../"
+
+package:
+  name: "opendust"
+  version: "1.0.0"
+
