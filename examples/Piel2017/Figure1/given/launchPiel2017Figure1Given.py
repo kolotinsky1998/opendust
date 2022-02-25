@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     R = 3 * plasmaParametersInSIUnits.r_D_e
     H = 6 * plasmaParametersInSIUnits.r_D_e
-    N = int(2 ** 16)
+    N = int(2 ** 19)
     n = 3000
     d_t = 3.5148240854e-09
     simulationParametersInSIUnits = SimulatioParametersInSIUnits(
@@ -41,8 +41,8 @@ if __name__ == "__main__":
     ###################################
 
     directory = "/home/avtimofeev/opendust/data/Piel2017/Figure1/given/"
-    nOutput = 1000
-    nFileOutput = 1000
+    nOutput = 10
+    nFileOutput = 10
     csvOutputFileName = directory + "csv/trajectory"
     xyzOutputFileName = directory + "trajectory.xyz"
     restartFileName = directory + "RESTART"
