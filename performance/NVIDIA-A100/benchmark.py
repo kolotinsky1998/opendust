@@ -9,9 +9,9 @@ import time
 
 if __name__ == "__main__":
 
-    ########################################
-    ### 1. Plasma parameters in SI units ###
-    ########################################
+    ###############################################
+    ### 1. Define plasma parameters in SI units ###
+    ###############################################
 
     T_e = 29011  # electron temperature (K)
     T_i = 290.11  # ion temperature (K)
@@ -24,9 +24,9 @@ if __name__ == "__main__":
         T_i, T_e, n_inf, M, m_i
     )
 
-    ############################################
-    ### 2. Simulation parameters in SI units ###
-    ############################################
+    ###################################################
+    ### 2. Define simulation parameters in SI units ###
+    ###################################################
 
     R = 3 * plasmaParametersInSIUnits.r_D_e
     H = 6 * plasmaParametersInSIUnits.r_D_e

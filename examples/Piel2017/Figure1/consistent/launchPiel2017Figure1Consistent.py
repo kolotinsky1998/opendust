@@ -1,35 +1,30 @@
-import opendust
 from opendust.opendust import DustParticle
 from opendust.opendust import PlasmaParametersInSIUnitsMaxwell
-from opendust.opendust import PlasmaParametersInSIUnitsFieldDriven
 from opendust.opendust import SimulatioParametersInSIUnits
 from opendust.opendust import OutputParameters
 from opendust.opendust import OpenDust
 
-import math
-import numpy as np
-
 if __name__ == "__main__":
 
-    ########################################
-    ### 1. Plasma parameters in SI units ###
-    ########################################
+    ###############################################
+    ### 1. Define plasma parameters in SI units ###
+    ###############################################
 
     T_e = 29011  # electron temperature (K)
-    T_n = 290.11  # neutral gas temperature (K)
+    T_i = 290.11  # ion temperature (K)
     n_inf = 1e14  # ion concentration (1/m^3)
     m_i = 6.6335209e-26  # Ar+ ions' mass (kg)
-    M = 1 #Mach number of the ion flow
+    M = 1  # Mach number of the ion flow
 
     distributionType = "Maxwellian"
     plasmaParametersInSIUnits = PlasmaParametersInSIUnitsMaxwell(
-        T_n, T_e, n_inf, M, m_i
+        T_i, T_e, n_inf, M, m_i
     )
     plasmaParametersInSIUnits.printParameters()
 
-    ############################################
-    ### 2. Simulation parameters in SI units ###
-    ############################################
+    ###################################################
+    ### 2. Define simulation parameters in SI units ###
+    ###################################################
 
     R = 3 * plasmaParametersInSIUnits.r_D_e
     H = 6 * plasmaParametersInSIUnits.r_D_e
@@ -41,11 +36,11 @@ if __name__ == "__main__":
     )
     simulationParametersInSIUnits.printParameters()
 
-    ############################
-    ### 3. Output parameters ###
-    ############################
+    ###################################
+    ### 3. Define output parameters ###
+    ###################################
 
-    directory = "/home/avtimofeev/kolotinskii/opendust/data/Piel2017/Figure1/consistent/"
+    directory = "/home/avtimofeev/opendust/data/Piel2017/Figure1/consistent/"
     nOutput = 1000
     nFileOutput = 1000
     csvOutputFileName = directory + "csv/trajectory"
@@ -55,23 +50,23 @@ if __name__ == "__main__":
         nOutput, nFileOutput, csvOutputFileName, xyzOutputFileName, restartFileName
     )
 
-    #########################
-    ### 4. Dust particles ###
-    #########################
+    ################################
+    ### 4. Define dust particles ###
+    ################################
 
     r = 58.8e-6  # radius of dust particles
     q = 0 * plasmaParametersInSIUnits.e  # charge of dust particles
     chargeCalculationMethod = "consistent"  # charge calculation method
 
-    x_1, y_1, z_1, r_1, q_1 = 0, 0, 0 * plasmaParametersInSIUnits.r_D_e, r, q
+    x_1, y_1, z_1, r_1, q_1 = 0, 0, -1 * plasmaParametersInSIUnits.r_D_e, r, q
 
     dustParticle1 = DustParticle(x_1, y_1, z_1, r_1, chargeCalculationMethod, q_1)
 
     dustParticles = [dustParticle1]
 
-    ##################################
-    ### 5. Create open dust object ###
-    ##################################
+    ############################################################
+    ### 5. Create OpenDust class object and start simulation ###
+    ############################################################
 
     openDust = OpenDust(
         plasmaParametersInSIUnits,
@@ -80,15 +75,12 @@ if __name__ == "__main__":
         dustParticles,
         distributionType,
     )
-    #########################
-    ### 6. Start dynamics ###
-    #########################
 
     toRestartFileName = ""
     openDust.simulate(toRestartFileName)
 
     ##################
-    ### 7. Analyze ###
+    ### 6. Analyze ###
     ##################
 
     forceIonsOrbitZ = openDust.dustParticles[0].forceIonsOrbit
@@ -111,8 +103,6 @@ if __name__ == "__main__":
     meanForceIonsOrbitZ = 0
     meanForceIonsCollectZ = 0
 
-    sigmaForceIonsOrbitZ = 0
-    sigmaForceIonsCollectZ = 0
     iterator = 0
 
     for i in range(n):
@@ -124,26 +114,11 @@ if __name__ == "__main__":
     meanForceIonsOrbitZ /= iterator
     meanForceIonsCollectZ /= iterator
 
-    iterator = 0
-    for i in range(n):
-        if i > 2000:
-            iterator += 1
-            sigmaForceIonsOrbitZ += (
-                forceIonsOrbitZ[i][2] - meanForceIonsOrbitZ
-            ) ** 2
-            sigmaForceIonsCollectZ += (
-                forceIonsCollectZ[i][2] - meanForceIonsCollectZ
-            ) ** 2
-
-    sigmaForceIonsOrbitZ = math.sqrt(sigmaForceIonsOrbitZ / iterator)
-    sigmaForceIonsCollectZ = math.sqrt(sigmaForceIonsCollectZ / iterator)
-
 
     print("Mean force from ions orbits = {}".format(meanForceIonsOrbitZ))
     print("Mean force from collected ions = {}".format(meanForceIonsCollectZ))
     print("Mean force from ions = {}".format(meanForceIonsOrbitZ+meanForceIonsCollectZ))
-    print("Fluctuation of force from ions orbits = {}".format(sigmaForceIonsOrbitZ))
-    print("Fluctuation of force from collected ions = {}".format(sigmaForceIonsCollectZ))
+
 
     f = open(directory+"charge.txt","w")
 

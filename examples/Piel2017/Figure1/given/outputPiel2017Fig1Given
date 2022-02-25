@@ -1,0 +1,42 @@
+#########################################
+##### Plasma parameters in SI units #####
+#########################################
+
+
+Ion temperature T_i = 290.11 K
+Electron temperature T_e = 29011 K
+Unperturbed density of the plasma in the quasineutral plasma region = 100000000000000.0 1/m**3
+Mach number of the ion flow M = 1
+Ion mass m_i = 6.6335209e-26 kg
+Electron Debye radius r_D_e = 0.001175403463213199 m
+Bohm velocity v_B = 2457.259031528654 m/s
+Electron plasma frequency w_p_e = 564628083.7952757 radian/s
+Ion plasma frequency w_p_i = 2090566.438192421 radian/s
+Thermal ion velocity v_T = 245.72590315286538 m/s
+Ion flow velocity v_fl = 2457.259031528654 m/s
+
+
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0035262103896395967 m
+Height of the cylindrical computational domain H = 0.0070524207792791935 m
+Number of superions N = 65536
+Number of ions in one superion N_s = 420.3631132989799
+Integration time step d_t = 3.5148240854e-09 s
+Number of time steps n = 3000
+
+
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 3000
+Step: 1000 out of 3000
+Step: 2000 out of 3000
+Mean force from ions orbits = 4.9265699054517904e-11
+Mean force from collected ions = 8.957285398375117e-12
+Mean force from ions = 5.822298445289302e-11
