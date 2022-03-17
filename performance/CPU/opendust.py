@@ -359,13 +359,13 @@ class OpenDust:
             )
             self.dustParticleForceLines.append(_dustParticleForceLine)
 
-    def simulate(self, deviceIndex = "0", cutOff = False, toRestartFileName=""):
+    def simulate(self, toRestartFileName=""):
         """! Conduct simulation
         @param palatformName    name of the platform used for calculation
         @param restartFileName  name of the restart file to read ion positions and velocities
         """
         
-        platformName="CUDA"
+        platformName="CPU"
 
         position = []
         velocity = []
@@ -477,12 +477,6 @@ class OpenDust:
         )
         ionIonForce.addGlobalParameter("r_D_e", self.r_D_e)
         ionIonForce.addGlobalParameter("r_0", self.r_0)
-
-        if cutOff == True:
-            ionIonForce.setNonbondedMethod(1)
-            ionIonForce.setCutoffDistance(3.2 * self.r_D_e)
-            ionIonForce.setUseSwitchingFunction(True)
-            ionIonForce.setSwitchingDistance(3 * self.r_D_e)
 
         """ Define ion-dust particle forces """
         dustParticleForces = []
@@ -1038,8 +1032,7 @@ class OpenDust:
 
         """ Create simulation context """
         platform = mm.Platform.getPlatformByName(platformName)
-        properties = {'DeviceIndex': deviceIndex, 'Precision': 'single'}
-        context = mm.Context(system, integrator, platform, properties)
+        context = mm.Context(system, integrator, platform)
         context.setPositions(position)
         context.setVelocities(velocity)
 
@@ -1090,10 +1083,10 @@ class OpenDust:
                         csvOutputFileName + "{}.csv".format(int(i / nFileOutput)), "w"
                     )
                     _writer = csv.writer(csvOutputFile)
-                    _header = ["x", "y", "z", "density", "mass"]
+                    _header = ["x", "y", "z", "density"]
                     _writer.writerow(_header)
                     for j in range(self.N):
-                        _data = [x[j], y[j], z[j], self.plasmaParametersInSIUnits.n_inf*1e-27, self.N_s]
+                        _data = [x[j], y[j], z[j], 1]
                         _writer.writerow(_data)
                     csvOutputFile.close()
             """ Write state to a restart file """

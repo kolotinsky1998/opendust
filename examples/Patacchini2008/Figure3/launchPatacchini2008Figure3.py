@@ -1,12 +1,9 @@
-from opendust import opendust
-from opendust import DustParticle
-from opendust import PlasmaParametersInSIUnitsMaxwell
-from opendust import PlasmaParametersInSIUnitsFieldDriven
-from opendust import SimulatioParametersInSIUnits
-from opendust import OutputParameters
-from opendust import OpenDust
+from opendust.opendust import DustParticle
+from opendust.opendust import PlasmaParametersInSIUnitsFieldDriven
+from opendust.opendust import SimulatioParametersInSIUnits
+from opendust.opendust import OutputParameters
+from opendust.opendust import OpenDust
 
-import math
 import numpy as np
 
 if __name__ == "__main__":
@@ -63,9 +60,9 @@ if __name__ == "__main__":
     )
 
     for p in range(13):
-        ########################################
-        ### 1. Plasma parameters in SI units ###
-        ########################################
+        ###############################################
+        ### 1. Define plasma parameters in SI units ###
+        ###############################################
 
         T_e = 30000  # electron temperature (K)
         T_n = 300  # neutral gas temperature (K)
@@ -80,11 +77,11 @@ if __name__ == "__main__":
         )
         plasmaParametersInSIUnits.printParameters()
 
-        ############################################
-        ### 2. Simulation parameters in SI units ###
-        ############################################
+        ###################################################
+        ### 2. Define simulation parameters in SI units ###
+        ###################################################
 
-        R = 1.25 * plasmaParametersInSIUnits.r_D_e
+        R = 3 * plasmaParametersInSIUnits.r_D_e
         H = 6 * plasmaParametersInSIUnits.r_D_e
         N = int(2 ** 17)
         n = 200000
@@ -94,41 +91,37 @@ if __name__ == "__main__":
         )
         simulationParametersInSIUnits.printParameters()
 
-        ############################
-        ### 3. Output parameters ###
-        ############################
+        ###################################
+        ### 3. Define output parameters ###
+        ###################################
 
-        nOutput = 100000
-        nFileOutput = 100000
-        csvOutputFileName = ""
-        xyzOutputFileName = (
-            "/home/avtimofeev/kolotinskii/opendust/data/Patacchini2008/Figure3/{}point/trajectory.xyz".format(
-                p + 1
-            )
-        )
-        restartFileName = (
-            "/home/avtimofeev/kolotinskii/opendust/data/Patacchini2008/Figure3/{}point/RESTART".format(p + 1)
-        )
+        directory = "/home/avtimofeev/opendust/data/Patacchini2008/Figure3/{}point/".format(p + 1)
+        nOutput = 49999
+        nFileOutput = 49999
+        csvOutputFileName = directory + "csv/trajectory"
+        xyzOutputFileName = directory + "trajectory.xyz"
+        restartFileName = directory + "RESTART"
         outputParameters = OutputParameters(
             nOutput, nFileOutput, csvOutputFileName, xyzOutputFileName, restartFileName
         )
-        #########################
-        ### 4. Dust particles ###
-        #########################
+
+        ################################
+        ### 4. Define dust particles ###
+        ################################
 
         r = 1e-05  # radius of dust particles
-        q = q_array[p] * plasmaParametersInSIUnits.e  # charge of dust particles
-        chargeCalculationMethod = "given"  # charge calculation method
+        q = 0 * plasmaParametersInSIUnits.e  # charge of dust particles
+        chargeCalculationMethod = "consistent"  # charge calculation method
 
-        x_1, y_1, z_1, r_1, q_1 = 0, 0, 0 * plasmaParametersInSIUnits.r_D_e, r, q
+        x_1, y_1, z_1, r_1, q_1 = 0, 0, -1 * plasmaParametersInSIUnits.r_D_e, r, q
 
         dustParticle1 = DustParticle(x_1, y_1, z_1, r_1, chargeCalculationMethod, q_1)
 
         dustParticles = [dustParticle1]
 
-        ##################################
-        ### 5. Create open dust object ###
-        ##################################
+        ############################################################
+        ### 5. Create OpenDust class object and start simulation ###
+        ############################################################
 
         openDust = OpenDust(
             plasmaParametersInSIUnits,
@@ -137,100 +130,64 @@ if __name__ == "__main__":
             dustParticles,
             distributionType,
         )
-        #########################
-        ### 6. Start dynamics ###
-        #########################
 
-        platformName = "CUDA"
-        toRestartFileName = ""
-        openDust.simulate(platformName, toRestartFileName)
+        openDust.simulate(deviceIndex = "0,1,2,3,4,5,6,7", cutOff = False)
+
 
         ##################
-        ### 7. Analyze ###
+        ### 6. Analyze ###
         ##################
 
-        forceDust1 = openDust.dustParticles[0].forceDust
-        forceIonsCollect1 = openDust.dustParticles[0].forceIonsCollect
-        forceIonsOrbit1 = openDust.dustParticles[0].forceIonsOrbit
-        forceExternalField = openDust.dustParticles[0].forceExternalField
-        q1 = openDust.dustParticles[0].q
+        forceIonsOrbitZ = openDust.dustParticles[0].forceIonsOrbit
+        forceIonsCollectZ = openDust.dustParticles[0].forceIonsCollect
+        q = openDust.dustParticles[0].q
         t = openDust.t
 
-        f = open(
-            "/home/avtimofeev/kolotinskii/opendust/data/Patacchini2008/Figure3/{}point/force.txt".format(
-                p + 1
-            ),
-            "w",
-        )
+        f = open(directory+"force.txt","w")
+
         for i in range(n):
             f.write(
-                "{}\t{}\t{}\t{}\t{}\n".format(
+                "{}\t{}\t{}\n".format(
                     t[i],
-                    forceIonsOrbit1[i][2],
-                    forceIonsCollect1[i][2],
-                    forceDust1[i][2],
-                    forceExternalField[i][2],
+                    forceIonsOrbitZ[i][2],
+                    forceIonsCollectZ[i][2],
                 )
             )
         f.close()
 
-        meanForceIonsOrbit1 = 0
-        meanForceIonsCollect1 = 0
-        meanForceField1 = 0
-        meanCharge1 = 0
-        sigmaForceIonsOrbit1 = 0
-        sigmaForceIonsCollect1 = 0
-        sigmaForceField1 = 0
-        sigmaCharge1 = 0
-        iterator = 0
-        for i in range(n):
-            if i > 100000:
-                iterator += 1
-                meanForceIonsOrbit1 += forceIonsOrbit1[i][2]
-                meanForceIonsCollect1 += forceIonsCollect1[i][2]
-                meanForceField1 += forceExternalField[i][2]
-                meanCharge1 += q1[i]
-        meanForceIonsOrbit1 /= iterator
-        meanForceIonsCollect1 /= iterator
-        meanForceField1 /= iterator
-        meanCharge1 /= iterator
-        iterator = 0
-        for i in range(n):
-            if i > 100000:
-                iterator += 1
-                sigmaForceIonsOrbit1 += (
-                    forceIonsOrbit1[i][2] - meanForceIonsOrbit1
-                ) ** 2
-                sigmaForceIonsCollect1 += (
-                    forceIonsCollect1[i][2] - meanForceIonsCollect1
-                ) ** 2
-                sigmaForceField1 += (forceExternalField[i][2] - meanForceField1) ** 2
-                sigmaCharge1 += (q1[i] - meanCharge1) ** 2
-        sigmaForceIonsOrbit1 = math.sqrt(sigmaForceIonsOrbit1 / iterator)
-        sigmaForceIonsCollect1 = math.sqrt(sigmaForceIonsCollect1 / iterator)
-        sigmaForceField1 = math.sqrt(sigmaForceField1 / iterator)
-        sigmaCharge1 = math.sqrt(sigmaCharge1 / iterator)
+        meanForceIonsOrbitZ = 0
+        meanForceIonsCollectZ = 0
+        meanCharge = 0
 
-        print(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
-                w_c,
-                meanForceIonsOrbit1,
-                meanForceIonsCollect1,
-                meanForceField1,
-                meanCharge1,
-                sigmaForceIonsOrbit1,
-                sigmaForceIonsCollect1,
-                sigmaForceField1,
-                sigmaCharge1,
+        iterator = 0
+
+        for i in range(n):
+            if i > 150000:
+                iterator += 1
+                meanForceIonsOrbitZ += forceIonsOrbitZ[i][2]
+                meanForceIonsCollectZ += forceIonsCollectZ[i][2]
+                meanCharge += q[i]
+
+        meanForceIonsOrbitZ /= iterator
+        meanForceIonsCollectZ /= iterator
+        meanCharge /= iterator
+
+        file = open("force.txt",'a')
+        file.write("{}\t{}\t{}\n".format(w_c, meanForceIonsOrbitZ, meanForceIonsCollectZ))
+        file.close()
+        
+        file = open("charge.txt",'a')
+        file.write("{}\t{}\n".format(w_c, meanCharge))
+        file.close()
+
+
+        f = open(directory+"charge.txt","w")
+
+        for i in range(n):
+            f.write(
+                "{}\t{}\n".format(
+                    t[i],
+                    q[i]
+                )
             )
-        )
-
-        f = open(
-            "/home/avtimofeev/kolotinskii/opendust/data/Patacchini2008/Figure3/{}point/charge.txt".format(
-                p + 1
-            ),
-            "w",
-        )
-        for i in range(n):
-            f.write("{}\t{}\n".format(t[i], q1[i]))
         f.close()

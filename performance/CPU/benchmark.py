@@ -1,8 +1,8 @@
-from opendust.opendust import DustParticle
-from opendust.opendust import PlasmaParametersInSIUnitsMaxwell
-from opendust.opendust import SimulatioParametersInSIUnits
-from opendust.opendust import OutputParameters
-from opendust.opendust import OpenDust
+from opendust import DustParticle
+from opendust import PlasmaParametersInSIUnitsMaxwell
+from opendust import SimulatioParametersInSIUnits
+from opendust import OutputParameters
+from opendust import OpenDust
 import sys
 import time
 
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     R = 3 * plasmaParametersInSIUnits.r_D_e
     H = 6 * plasmaParametersInSIUnits.r_D_e
     N = int(2 ** float((sys.argv[1])))
-    n = 3000
+    n = 3
     d_t = 3.5148240854e-09
     simulationParametersInSIUnits = SimulatioParametersInSIUnits(
         R, H, N, n, d_t, plasmaParametersInSIUnits

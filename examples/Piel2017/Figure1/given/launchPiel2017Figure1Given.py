@@ -76,8 +76,7 @@ if __name__ == "__main__":
         distributionType,
     )
 
-    toRestartFileName = ""
-    openDust.simulate(toRestartFileName)
+    openDust.simulate(deviceIndex = "0,1,2", cutOff = False)
 
     ##################
     ### 6. Analyze ###

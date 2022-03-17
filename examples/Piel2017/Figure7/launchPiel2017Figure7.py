@@ -1,12 +1,9 @@
-from opendust import opendust
-from opendust import DustParticle
-from opendust import PlasmaParametersInSIUnitsMaxwell
-from opendust import PlasmaParametersInSIUnitsFieldDriven
-from opendust import SimulatioParametersInSIUnits
-from opendust import OutputParameters
-from opendust import OpenDust
+from opendust.opendust import DustParticle
+from opendust.opendust import PlasmaParametersInSIUnitsMaxwell
+from opendust.opendust import SimulatioParametersInSIUnits
+from opendust.opendust import OutputParameters
+from opendust.opendust import OpenDust
 
-import math
 import numpy as np
 
 if __name__ == "__main__":
@@ -26,10 +23,10 @@ if __name__ == "__main__":
             1.00000,
         ]
     )
-    for p in range(2, 3):
-        ########################################
-        ### 1. Plasma parameters in SI units ###
-        ########################################
+    for p in range(11):
+        ###############################################
+        ### 1. Define plasma parameters in SI units ###
+        ###############################################
 
         T_e = 29011  # electron temperature (K)
         T_n = 290.11  # neutral gas temperature (K)
@@ -43,27 +40,25 @@ if __name__ == "__main__":
         )
         plasmaParametersInSIUnits.printParameters()
 
-        ############################################
-        ### 2. Simulation parameters in SI units ###
-        ############################################
+        ###################################################
+        ### 2. Define simulation parameters in SI units ###
+        ###################################################
 
         R = 3 * plasmaParametersInSIUnits.r_D_e
         H = 6 * plasmaParametersInSIUnits.r_D_e
-        N = int(2 ** 19)
-        n = 36000
+        N = int(2 ** 17)
+        n = 5000
         d_t = 0.5148240854e-09
         simulationParametersInSIUnits = SimulatioParametersInSIUnits(
             R, H, N, n, d_t, plasmaParametersInSIUnits
         )
         simulationParametersInSIUnits.printParameters()
 
-        ############################
-        ### 3. Output parameters ###
-        ############################
+        ###################################
+        ### 3. Define output parameters ###
+        ###################################
 
-        directory = "/home/avtimofeev/kolotinskii/opendust/data/Piel2017/Figure7/point{}/".format(
-            p + 1
-        )
+        directory = "/home/avtimofeev/opendust/data/Piel2017/Figure7/point{}/".format(p + 1)
         nOutput = 1000
         nFileOutput = 1000
         csvOutputFileName = directory + "csv/trajectory"
@@ -73,10 +68,10 @@ if __name__ == "__main__":
             nOutput, nFileOutput, csvOutputFileName, xyzOutputFileName, restartFileName
         )
 
-        #########################
-        ### 4. Dust particles ###
-        #########################
-
+        ################################
+        ### 4. Define dust particles ###
+        ################################
+        
         r = 25.0e-6  # radius of dust particles
         q = 170000.0 * plasmaParametersInSIUnits.e  # charge of dust particles
         chargeCalculationMethod = "given"  # charge calculation method
@@ -95,9 +90,9 @@ if __name__ == "__main__":
 
         dustParticles = [dustParticle1, dustParticle2]
 
-        ##################################
-        ### 5. Create open dust object ###
-        ##################################
+        ############################################################
+        ### 5. Create OpenDust class object and start simulation ###
+        ############################################################
 
         openDust = OpenDust(
             plasmaParametersInSIUnits,
@@ -106,13 +101,8 @@ if __name__ == "__main__":
             dustParticles,
             distributionType,
         )
-        #########################
-        ### 6. Start dynamics ###
-        #########################
 
-        platformName = "CUDA"
-        toRestartFileName = ""
-        openDust.simulate(platformName, toRestartFileName)
+        openDust.simulate(deviceIndex = "0,1,2,3,4,5,6,7", cutOff = False)
 
         ##################
         ### 7. Analyze ###
@@ -146,7 +136,7 @@ if __name__ == "__main__":
         iterator = 0
 
         for i in range(n):
-            if i > 18000:
+            if i > 2500:
                 iterator += 1
                 meanForce1X += forceIonsOrbit1[i][0] + forceDust1[i][0]
                 meanForce1Z += forceIonsOrbit1[i][2] + forceDust1[i][2]

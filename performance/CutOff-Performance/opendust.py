@@ -479,7 +479,7 @@ class OpenDust:
         ionIonForce.addGlobalParameter("r_0", self.r_0)
 
         if cutOff == True:
-            ionIonForce.setNonbondedMethod(1)
+            ionIonForce.setNonbondedMethod(mm.CustomNonbondedForce.CutoffNonPeriodic)
             ionIonForce.setCutoffDistance(3.2 * self.r_D_e)
             ionIonForce.setUseSwitchingFunction(True)
             ionIonForce.setSwitchingDistance(3 * self.r_D_e)
@@ -919,18 +919,19 @@ class OpenDust:
             integrator.addComputeSum(
                 "moment_f_z_p" + str(p), "_z(v)*inside_dust_p" + str(p)
             )
-
+        
         integrator.addComputePerDof(
             "ions_to_sides",
             "ions_to_correct*vector(_x(step(p_t/2-abs(p_t/2-_x(uniform)))),_y(step(p_s/2-abs(p_t+p_s/2-_x(uniform)))),_z(step(p_b/2-abs(p_t+p_s+p_b/2-_x(uniform)))))",
         )
-
+        
         integrator.addComputePerDof(
             "v",
             "select(_x(ions_to_sides),x_axis*v_T*_x(gaussian)+y_axis*v_T*_y(gaussian)+z_axis*"
             + _vTopString
             + ", v)",
         )
+        
         integrator.addComputePerDof(
             "x",
             "select(_x(ions_to_sides),x_axis*R*sqrt(_x(uniform))*cos(2*pi*_y(uniform))+y_axis*R*sqrt(_x(uniform))*sin(2*pi*_y(uniform))+z_axis*(-H/2), x)",
@@ -973,7 +974,7 @@ class OpenDust:
                 + _vZString
                 + ",v)",
             )
-
+        
         for p in range(self.numberOfDustParticles):
             integrator.addComputePerDof(
                 "r_ps" + str(p),

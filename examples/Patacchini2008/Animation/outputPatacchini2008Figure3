@@ -1,0 +1,141 @@
+#########################################
+##### Plasma parameters in SI units #####
+#########################################
+
+
+Neutral gas temperature T_n = 300 K
+Electron temperature T_e = 30000 K
+Unperturbed density of the plasma in the quasineutral plasma region n_inf = 3571679624970000.0 1/m**3
+Mach number of the ion flow M = 0.9999999981091834
+Ion mass m_i = 1.673557e-27 kg
+Electron Debye radius r_D_e = 0.0002000000000000135 m
+Bohm velocity v_B = 15731.930327435968 m/s
+Electron plasma frequency w_p_e = 3374416792.9764185 radian/s
+Ion plasma frequency w_p_i = 78659651.63717453 radian/s
+Thermal neutral gas velocity v_T = 1573.1930327435969 m/s
+Ion flow velocity v_fl = 15731.930297689772 m/s
+Ion-neutral collision frequency w_c = 165562835.0 1/s
+External electric field E = 27206.6448 V/m
+
+
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0006000000000000405 m
+Height of the cylindrical computational domain H = 0.001200000000000081 m
+Number of superions N = 524288
+Number of ions in one superion N_s = 9.245623373754214
+Integration time step d_t = 1e-11 s
+Number of time steps n = 50000
+
+
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 50000
+Step: 500 out of 50000
+Step: 1000 out of 50000
+Step: 1500 out of 50000
+Step: 2000 out of 50000
+Step: 2500 out of 50000
+Step: 3000 out of 50000
+Step: 3500 out of 50000
+Step: 4000 out of 50000
+Step: 4500 out of 50000
+Step: 5000 out of 50000
+Step: 5500 out of 50000
+Step: 6000 out of 50000
+Step: 6500 out of 50000
+Step: 7000 out of 50000
+Step: 7500 out of 50000
+Step: 8000 out of 50000
+Step: 8500 out of 50000
+Step: 9000 out of 50000
+Step: 9500 out of 50000
+Step: 10000 out of 50000
+Step: 10500 out of 50000
+Step: 11000 out of 50000
+Step: 11500 out of 50000
+Step: 12000 out of 50000
+Step: 12500 out of 50000
+Step: 13000 out of 50000
+Step: 13500 out of 50000
+Step: 14000 out of 50000
+Step: 14500 out of 50000
+Step: 15000 out of 50000
+Step: 15500 out of 50000
+Step: 16000 out of 50000
+Step: 16500 out of 50000
+Step: 17000 out of 50000
+Step: 17500 out of 50000
+Step: 18000 out of 50000
+Step: 18500 out of 50000
+Step: 19000 out of 50000
+Step: 19500 out of 50000
+Step: 20000 out of 50000
+Step: 20500 out of 50000
+Step: 21000 out of 50000
+Step: 21500 out of 50000
+Step: 22000 out of 50000
+Step: 22500 out of 50000
+Step: 23000 out of 50000
+Step: 23500 out of 50000
+Step: 24000 out of 50000
+Step: 24500 out of 50000
+Step: 25000 out of 50000
+Step: 25500 out of 50000
+Step: 26000 out of 50000
+Step: 26500 out of 50000
+Step: 27000 out of 50000
+Step: 27500 out of 50000
+Step: 28000 out of 50000
+Step: 28500 out of 50000
+Step: 29000 out of 50000
+Step: 29500 out of 50000
+Step: 30000 out of 50000
+Step: 30500 out of 50000
+Step: 31000 out of 50000
+Step: 31500 out of 50000
+Step: 32000 out of 50000
+Step: 32500 out of 50000
+Step: 33000 out of 50000
+Step: 33500 out of 50000
+Step: 34000 out of 50000
+Step: 34500 out of 50000
+Step: 35000 out of 50000
+Step: 35500 out of 50000
+Step: 36000 out of 50000
+Step: 36500 out of 50000
+Step: 37000 out of 50000
+Step: 37500 out of 50000
+Step: 38000 out of 50000
+Step: 38500 out of 50000
+Step: 39000 out of 50000
+Step: 39500 out of 50000
+Step: 40000 out of 50000
+Step: 40500 out of 50000
+Step: 41000 out of 50000
+Step: 41500 out of 50000
+Step: 42000 out of 50000
+Step: 42500 out of 50000
+Step: 43000 out of 50000
+Step: 43500 out of 50000
+Step: 44000 out of 50000
+Step: 44500 out of 50000
+Step: 45000 out of 50000
+Step: 45500 out of 50000
+Step: 46000 out of 50000
+Step: 46500 out of 50000
+Step: 47000 out of 50000
+Step: 47500 out of 50000
+Step: 48000 out of 50000
+Step: 48500 out of 50000
+Step: 49000 out of 50000
+Step: 49500 out of 50000
+Mean force from ions orbits = 1.737435372059157e-10
+Mean force from collected ions = -2.1026019017940494e-11
+Mean force from ions = 1.527175181879752e-10

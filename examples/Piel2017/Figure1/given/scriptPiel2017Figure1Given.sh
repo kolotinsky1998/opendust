@@ -5,7 +5,7 @@
 #SBATCH --time=24:00:00            
 #SBATCH --ntasks=1                
 #SBATCH --nodes=1                  
-#SBATCH --gpus=1                   
+#SBATCH --gpus=3                  
 #SBATCH --cpus-per-task=1         
 #SBATCH  --constraint="type_a|type_b|type_c"
 

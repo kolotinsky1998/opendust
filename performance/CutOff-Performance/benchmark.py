@@ -1,8 +1,8 @@
-from opendust.opendust import DustParticle
-from opendust.opendust import PlasmaParametersInSIUnitsMaxwell
-from opendust.opendust import SimulatioParametersInSIUnits
-from opendust.opendust import OutputParameters
-from opendust.opendust import OpenDust
+from opendust import DustParticle
+from opendust import PlasmaParametersInSIUnitsMaxwell
+from opendust import SimulatioParametersInSIUnits
+from opendust import OutputParameters
+from opendust import OpenDust
 import sys
 import time
 
@@ -29,9 +29,9 @@ if __name__ == "__main__":
     ############################################
 
     R = 3 * plasmaParametersInSIUnits.r_D_e
-    H = 6 * plasmaParametersInSIUnits.r_D_e
-    N = int(2 ** float((sys.argv[1])))
-    n = 3000
+    H = float(sys.argv[1])*6 * plasmaParametersInSIUnits.r_D_e
+    N = int(sys.argv[1])*2**15
+    n = 3
     d_t = 3.5148240854e-09
     simulationParametersInSIUnits = SimulatioParametersInSIUnits(
         R, H, N, n, d_t, plasmaParametersInSIUnits
@@ -41,8 +41,8 @@ if __name__ == "__main__":
     ### 3. Define output parameters ###
     ###################################
 
-    nOutput = 2000
-    nFileOutput = 2000
+    nOutput = 2999
+    nFileOutput = 2999
 
     outputParameters = OutputParameters(
         nOutput, nFileOutput
@@ -79,9 +79,10 @@ if __name__ == "__main__":
         dustParticles,
         distributionType,
     )
+
     start = time.time()
-    openDust.simulate()
+    openDust.simulate(deviceIndex = "0", cutOff = True)
     end = time.time()
     file = open("time.txt",'a')
-    file.write("{}\t{}\n".format(sys.argv[1], end-start))
+    file.write("{}\t{}\n".format(int(sys.argv[1]), end-start))
     file.close()
