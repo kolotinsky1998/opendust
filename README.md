@@ -1,7 +1,6 @@
 # OpenDust
 OpenDust: A fast GPU-accelerated code for calculation forces, acting on micro-particles in a plasma flow
-![Alt Text](https://github.com/kolotinsky1998/opendust/blob/main/animation/animation.gif |  width="150" | height="150")
-
+<img src="https://github.com/kolotinsky1998/opendust/blob/main/animation/animation.gif" width="150" height="150" />
 ## Installation
 OpenDust is installed using [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 
