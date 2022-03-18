@@ -28,5 +28,5 @@ With recent conda versions (v4.8.4+), this will install a version of OpenDust co
 conda install -c kolotinsky -c conda-forge opendust cudatoolkit=10.0
 ```
 where `10.0` should be replaced with the particular CUDA version you want to target.
-## Installation
+##  Documentation
 https://github.com/kolotinsky1998/opendust/tree/main/tutorial
