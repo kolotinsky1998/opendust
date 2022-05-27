@@ -30,3 +30,18 @@ conda install -c kolotinsky -c conda-forge opendust cudatoolkit=10.0
 where `10.0` should be replaced with the particular CUDA version you want to target.
 ##  Documentation
 https://github.com/kolotinsky1998/opendust/tree/main/tutorial
+
+##  How to cite
+In case of usage OpenDust please cite the article:
+
+OpenDust: A fast GPU-accelerated code for calculation forces, acting on microparticles in a plasma flow, D.A. Kolotinskii, A.V. Timofeev
+
+##  Author's contacts
+
+If you have any questions, comments or offers related to the OpenDust package or the base article do not to hesitate to contact me!
+
+Email: kolotinskiy.da@phystech.edu
+
+Research Gate: https://www.researchgate.net/profile/Daniil_Kolotinskii
+
+Telegram: @daniil_kolotinskii
