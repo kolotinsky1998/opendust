@@ -1,12 +1,12 @@
 # OpenDust
-OpenDust: A fast GPU-accelerated code for calculation forces, acting on micro-particles in a plasma flow
+OpenDust: A fast GPU-accelerated code for calculation forces, acting on microparticles in a plasma flow
 <img src="https://github.com/kolotinsky1998/opendust/blob/main/animation/animation.gif" width="600" height="450" />
 
 Opendust is GPU-based, Python library for dusty plasmas. 
 
-OpenDust aims to provide researchers both experimenters and theorists user-friendly and high-performance tool for calculation forces, act-ing on macroparticles, and macroparticles’ charges in a plasma flow. 
+OpenDust aims to provide researchers both experimenters and theorists user-friendly and high-performance tool for calculation forces, acting on microparticles, and microparticles’ charges in a plasma flow. 
 
-OpenDust performance originates from highly-optimized Cuda back-end and allows to perform self-consistent calculation of plasma flow around macroparticles in seconds.
+OpenDust performance originates from highly-optimized Cuda back-end and allows to perform self-consistent calculation of plasma flow around microparticles in seconds.
 
 ## Installation
 OpenDust is installed using [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
