@@ -7,7 +7,7 @@
 #SBATCH --nodes=1                  
 #SBATCH --gpus=1                   
 #SBATCH --cpus-per-task=1         
-#SBATCH  --constraint="type_a|type_b|type_c|type_e"
+#SBATCH  --constraint="type_a|type_b|type_c"
 
 touch time.txt
 for var in 15 16 17 18 

@@ -130,7 +130,11 @@ dmypy.json
 
 #data directory
 data/
-
+csv/
+trajectory.xyz
+trajectoryEquilibrate.xyz
+RESTART_Equilibrate
+RESTART
 #test directory
 test/
 
