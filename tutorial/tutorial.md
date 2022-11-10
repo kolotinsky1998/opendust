@@ -24,7 +24,7 @@ Necessary OpenDust modules for this simulation are
 ``` python
 from opendust.opendust import DustParticle
 from opendust.opendust import PlasmaParametersInSIUnitsMaxwell
-from opendust.opendust import SimulatioParametersInSIUnits
+from opendust.opendust import SimulationParametersInSIUnits
 from opendust.opendust import OutputParameters
 from opendust.opendust import OpenDust
 
@@ -48,7 +48,7 @@ plasmaParametersInSIUnits.printParameters()
 ```
 2. **Define simulation parameters in SI units.** In the second step, simulation parameters are defined: radius ```R`` and height ```H``` 
 of the cylindrical computational domain, number of discrete particle (ion clouds) used in simulation ```N```, number of integration time steps ```d_t```.
-For convinience, radius ```R`` and height ```H``` of the cylindrical computational domain can be defined with the help of ```plasmaParametersInSIUnits.r_D_e``` attribute, which is the electron Debye radius. These parameters are used to create ```SimulatioParametersInSIUnits``` class object. This class has ```printParameters()``` method which prints simulation parameters to a console in the beginning of the simulation.
+For convinience, radius ```R`` and height ```H``` of the cylindrical computational domain can be defined with the help of ```plasmaParametersInSIUnits.r_D_e``` attribute, which is the electron Debye radius. These parameters are used to create ```SimulationParametersInSIUnits``` class object. This class has ```printParameters()``` method which prints simulation parameters to a console in the beginning of the simulation.
 
 ``` Python
 R = 3 * plasmaParametersInSIUnits.r_D_e
@@ -56,7 +56,7 @@ H = 6 * plasmaParametersInSIUnits.r_D_e
 N = int(2 ** 16)
 n = 3000
 d_t = 3.5148240854e-09
-simulationParametersInSIUnits = SimulatioParametersInSIUnits(
+simulationParametersInSIUnits = SimulationParametersInSIUnits(
     R, H, N, n, d_t, plasmaParametersInSIUnits
 )
 simulationParametersInSIUnits.printParameters()

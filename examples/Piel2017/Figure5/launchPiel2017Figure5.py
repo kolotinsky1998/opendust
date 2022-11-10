@@ -2,7 +2,7 @@ from opendust import opendust
 from opendust import DustParticle
 from opendust import PlasmaParametersInSIUnitsMaxwell
 from opendust import PlasmaParametersInSIUnitsFieldDriven
-from opendust import SimulatioParametersInSIUnits
+from opendust import SimulationParametersInSIUnits
 from opendust import OutputParameters
 from opendust import OpenDust
 
@@ -53,7 +53,7 @@ if __name__ == "__main__":
         N = int(2 ** 16)
         n = 5000
         d_t = 3.5148240854e-09
-        simulationParametersInSIUnits = SimulatioParametersInSIUnits(
+        simulationParametersInSIUnits = SimulationParametersInSIUnits(
             R, H, N, n, d_t, plasmaParametersInSIUnits
         )
         simulationParametersInSIUnits.printParameters()

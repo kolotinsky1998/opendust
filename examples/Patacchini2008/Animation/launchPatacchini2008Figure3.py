@@ -1,6 +1,6 @@
 from opendust.opendust import DustParticle
 from opendust.opendust import PlasmaParametersInSIUnitsFieldDriven
-from opendust.opendust import SimulatioParametersInSIUnits
+from opendust.opendust import SimulationParametersInSIUnits
 from opendust.opendust import OutputParameters
 from opendust.opendust import OpenDust
 
@@ -31,7 +31,7 @@ H = 6 * plasmaParametersInSIUnits.r_D_e
 N = int(2 ** 19)
 n = 50000
 d_t = 1e-11
-simulationParametersInSIUnits = SimulatioParametersInSIUnits(
+simulationParametersInSIUnits = SimulationParametersInSIUnits(
     R, H, N, n, d_t, plasmaParametersInSIUnits
 )
 simulationParametersInSIUnits.printParameters()

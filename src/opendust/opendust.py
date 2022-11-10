@@ -171,16 +171,16 @@ class PlasmaParametersInSIUnitsFieldDriven:
         print("\n")
 
 
-""" SimulatioParametersInSIUnits class 
+""" SimulationParametersInSIUnits class 
 
 stores information about simulation paremeters such as
 intergration step, radius of a spherical computational domain, etc.
 """
 
 
-class SimulatioParametersInSIUnits:
+class SimulationParametersInSIUnits:
     def __init__(self, R, H, N, n, d_t, plasmaParametersInSIUnits):
-        """! Initialize SimulatioParametersInSIUnits class
+        """! Initialize SimulationParametersInSIUnits class
         @param R        radius of a cylindrical simulation domain
         @param H        height of a cylindrical simulation domain
         @param N        number of superions used in simulation
@@ -231,7 +231,7 @@ class OutputParameters:
         xyzOutputFileName="",
         restartFileName="",
     ):
-        """! Initialize SimulatioParametersInSIUnits class
+        """! Initialize SimulationParametersInSIUnits class
         @param nOutput      each nOutput step general information is printed to a console
         @param nFileOutput  each nFileOutput step coordinates of superions are written to a file
         @param csvOutputFileName    basename of the CSV-format files where coordinates of superions are recorded
