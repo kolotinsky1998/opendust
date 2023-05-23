@@ -1,0 +1,541 @@
+Iteration: 5
+#########################################
+##### Plasma parameters in SI units #####
+#########################################
+
+
+Neutral gas temperature T_n = 290 K
+Electron temperature T_e = 58022 K
+Unperturbed density of the plasma in the quasineutral plasma region n_inf = 100000000000000.0 1/m**3
+Mach number of the ions entering the simulation domain  M = 0.27507630025582636
+Ion mass m_i = 6.6335209e-26 kg
+Electron Debye radius r_D_e = 0.0016622715189364113 m
+Bohm velocity v_B = 3475.089048651599 m/s
+Electron plasma frequency w_p_e = 564628083.7952757 radian/s
+Ion plasma frequency w_p_i = 2090566.438192421 radian/s
+Thermal neutral gas velocity v_T = 245.67931321795072 m/s
+Ion flow velocity v_fl = 955.9146385626212 m/s
+Ion-neutral collision frequency w_c = 4923166.948987483 1/s
+Order of external electric field: 2
+E_0 = 2683.329450592909 (V/m)
+alpha = 39227.12757274581 (V/m^2)
+beta = -47197015.80141814 (V/m^3)
+z1 = -0.003324543037872823 (m)
+z7 = 0.004155678797341029 (m)
+
+
+Equilibration parameters:
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0020778393986705143 m
+Height of the cylindrical computational domain H = 0.008311357594682057 m
+Number of superions N = 65536
+Number of ions in one superion N_s = 172.01481942962835
+Integration time step d_t = 2.0312128561995317e-08 s
+Number of time steps n = 1712
+
+
+Main simulation parameters:
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0020778393986705143 m
+Height of the cylindrical computational domain H = 0.008311357594682057 m
+Number of superions N = 65536
+Number of ions in one superion N_s = 172.01481942962835
+Integration time step d_t = 4.6499967891315133e-10 s
+Number of time steps n = 747928
+
+
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 1712
+Step: 17 out of 1712
+Step: 34 out of 1712
+Step: 51 out of 1712
+Step: 68 out of 1712
+Step: 85 out of 1712
+Step: 102 out of 1712
+Step: 119 out of 1712
+Step: 136 out of 1712
+Step: 153 out of 1712
+Step: 170 out of 1712
+Step: 187 out of 1712
+Step: 204 out of 1712
+Step: 221 out of 1712
+Step: 238 out of 1712
+Step: 255 out of 1712
+Step: 272 out of 1712
+Step: 289 out of 1712
+Step: 306 out of 1712
+Step: 323 out of 1712
+Step: 340 out of 1712
+Step: 357 out of 1712
+Step: 374 out of 1712
+Step: 391 out of 1712
+Step: 408 out of 1712
+Step: 425 out of 1712
+Step: 442 out of 1712
+Step: 459 out of 1712
+Step: 476 out of 1712
+Step: 493 out of 1712
+Step: 510 out of 1712
+Step: 527 out of 1712
+Step: 544 out of 1712
+Step: 561 out of 1712
+Step: 578 out of 1712
+Step: 595 out of 1712
+Step: 612 out of 1712
+Step: 629 out of 1712
+Step: 646 out of 1712
+Step: 663 out of 1712
+Step: 680 out of 1712
+Step: 697 out of 1712
+Step: 714 out of 1712
+Step: 731 out of 1712
+Step: 748 out of 1712
+Step: 765 out of 1712
+Step: 782 out of 1712
+Step: 799 out of 1712
+Step: 816 out of 1712
+Step: 833 out of 1712
+Step: 850 out of 1712
+Step: 867 out of 1712
+Step: 884 out of 1712
+Step: 901 out of 1712
+Step: 918 out of 1712
+Step: 935 out of 1712
+Step: 952 out of 1712
+Step: 969 out of 1712
+Step: 986 out of 1712
+Step: 1003 out of 1712
+Step: 1020 out of 1712
+Step: 1037 out of 1712
+Step: 1054 out of 1712
+Step: 1071 out of 1712
+Step: 1088 out of 1712
+Step: 1105 out of 1712
+Step: 1122 out of 1712
+Step: 1139 out of 1712
+Step: 1156 out of 1712
+Step: 1173 out of 1712
+Step: 1190 out of 1712
+Step: 1207 out of 1712
+Step: 1224 out of 1712
+Step: 1241 out of 1712
+Step: 1258 out of 1712
+Step: 1275 out of 1712
+Step: 1292 out of 1712
+Step: 1309 out of 1712
+Step: 1326 out of 1712
+Step: 1343 out of 1712
+Step: 1360 out of 1712
+Step: 1377 out of 1712
+Step: 1394 out of 1712
+Step: 1411 out of 1712
+Step: 1428 out of 1712
+Step: 1445 out of 1712
+Step: 1462 out of 1712
+Step: 1479 out of 1712
+Step: 1496 out of 1712
+Step: 1513 out of 1712
+Step: 1530 out of 1712
+Step: 1547 out of 1712
+Step: 1564 out of 1712
+Step: 1581 out of 1712
+Step: 1598 out of 1712
+Step: 1615 out of 1712
+Step: 1632 out of 1712
+Step: 1649 out of 1712
+Step: 1666 out of 1712
+Step: 1683 out of 1712
+Step: 1700 out of 1712
+Equilibrate time: 51.08158326148987
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 747928
+Step: 7479 out of 747928
+Step: 14958 out of 747928
+Step: 22437 out of 747928
+Step: 29916 out of 747928
+Step: 37395 out of 747928
+Step: 44874 out of 747928
+Step: 52353 out of 747928
+Step: 59832 out of 747928
+Step: 67311 out of 747928
+Step: 74790 out of 747928
+Step: 82269 out of 747928
+Step: 89748 out of 747928
+Step: 97227 out of 747928
+Step: 104706 out of 747928
+Step: 112185 out of 747928
+Step: 119664 out of 747928
+Step: 127143 out of 747928
+Step: 134622 out of 747928
+Step: 142101 out of 747928
+Step: 149580 out of 747928
+Step: 157059 out of 747928
+Step: 164538 out of 747928
+Step: 172017 out of 747928
+Step: 179496 out of 747928
+Step: 186975 out of 747928
+Step: 194454 out of 747928
+Step: 201933 out of 747928
+Step: 209412 out of 747928
+Step: 216891 out of 747928
+Step: 224370 out of 747928
+Step: 231849 out of 747928
+Step: 239328 out of 747928
+Step: 246807 out of 747928
+Step: 254286 out of 747928
+Step: 261765 out of 747928
+Step: 269244 out of 747928
+Step: 276723 out of 747928
+Step: 284202 out of 747928
+Step: 291681 out of 747928
+Step: 299160 out of 747928
+Step: 306639 out of 747928
+Step: 314118 out of 747928
+Step: 321597 out of 747928
+Step: 329076 out of 747928
+Step: 336555 out of 747928
+Step: 344034 out of 747928
+Step: 351513 out of 747928
+Step: 358992 out of 747928
+Step: 366471 out of 747928
+Step: 373950 out of 747928
+Step: 381429 out of 747928
+Step: 388908 out of 747928
+Step: 396387 out of 747928
+Step: 403866 out of 747928
+Step: 411345 out of 747928
+Step: 418824 out of 747928
+Step: 426303 out of 747928
+Step: 433782 out of 747928
+Step: 441261 out of 747928
+Step: 448740 out of 747928
+Step: 456219 out of 747928
+Step: 463698 out of 747928
+Step: 471177 out of 747928
+Step: 478656 out of 747928
+Step: 486135 out of 747928
+Step: 493614 out of 747928
+Step: 501093 out of 747928
+Step: 508572 out of 747928
+Step: 516051 out of 747928
+Step: 523530 out of 747928
+Step: 531009 out of 747928
+Step: 538488 out of 747928
+Step: 545967 out of 747928
+Step: 553446 out of 747928
+Step: 560925 out of 747928
+Step: 568404 out of 747928
+Step: 575883 out of 747928
+Step: 583362 out of 747928
+Step: 590841 out of 747928
+Step: 598320 out of 747928
+Step: 605799 out of 747928
+Step: 613278 out of 747928
+Step: 620757 out of 747928
+Step: 628236 out of 747928
+Step: 635715 out of 747928
+Step: 643194 out of 747928
+Step: 650673 out of 747928
+Step: 658152 out of 747928
+Step: 665631 out of 747928
+Step: 673110 out of 747928
+Step: 680589 out of 747928
+Step: 688068 out of 747928
+Step: 695547 out of 747928
+Step: 703026 out of 747928
+Step: 710505 out of 747928
+Step: 717984 out of 747928
+Step: 725463 out of 747928
+Step: 732942 out of 747928
+Step: 740421 out of 747928
+Step: 747900 out of 747928
+Main time: 33390.67687559128
+Iteration: 6
+#########################################
+##### Plasma parameters in SI units #####
+#########################################
+
+
+Neutral gas temperature T_n = 290 K
+Electron temperature T_e = 58022 K
+Unperturbed density of the plasma in the quasineutral plasma region n_inf = 100000000000000.0 1/m**3
+Mach number of the ions entering the simulation domain  M = 0.2895332109275555
+Ion mass m_i = 6.6335209e-26 kg
+Electron Debye radius r_D_e = 0.0016622715189364113 m
+Bohm velocity v_B = 3475.089048651599 m/s
+Electron plasma frequency w_p_e = 564628083.7952757 radian/s
+Ion plasma frequency w_p_i = 2090566.438192421 radian/s
+Thermal neutral gas velocity v_T = 245.67931321795072 m/s
+Ion flow velocity v_fl = 1006.1536905152817 m/s
+Ion-neutral collision frequency w_c = 5093704.831794149 1/s
+Order of external electric field: 2
+E_0 = 2590.6229040607213 (V/m)
+alpha = 22748.37999933845 (V/m^2)
+beta = -27370233.731603347 (V/m^3)
+z1 = -0.003324543037872823 (m)
+z7 = 0.004155678797341029 (m)
+
+
+Equilibration parameters:
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0020778393986705143 m
+Height of the cylindrical computational domain H = 0.008311357594682057 m
+Number of superions N = 65536
+Number of ions in one superion N_s = 172.01481942962835
+Integration time step d_t = 1.963207592552573e-08 s
+Number of time steps n = 1683
+
+
+Main simulation parameters:
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0020778393986705143 m
+Height of the cylindrical computational domain H = 0.008311357594682057 m
+Number of superions N = 65536
+Number of ions in one superion N_s = 172.01481942962835
+Integration time step d_t = 4.417814139034347e-10 s
+Number of time steps n = 747928
+
+
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 1683
+Step: 16 out of 1683
+Step: 32 out of 1683
+Step: 48 out of 1683
+Step: 64 out of 1683
+Step: 80 out of 1683
+Step: 96 out of 1683
+Step: 112 out of 1683
+Step: 128 out of 1683
+Step: 144 out of 1683
+Step: 160 out of 1683
+Step: 176 out of 1683
+Step: 192 out of 1683
+Step: 208 out of 1683
+Step: 224 out of 1683
+Step: 240 out of 1683
+Step: 256 out of 1683
+Step: 272 out of 1683
+Step: 288 out of 1683
+Step: 304 out of 1683
+Step: 320 out of 1683
+Step: 336 out of 1683
+Step: 352 out of 1683
+Step: 368 out of 1683
+Step: 384 out of 1683
+Step: 400 out of 1683
+Step: 416 out of 1683
+Step: 432 out of 1683
+Step: 448 out of 1683
+Step: 464 out of 1683
+Step: 480 out of 1683
+Step: 496 out of 1683
+Step: 512 out of 1683
+Step: 528 out of 1683
+Step: 544 out of 1683
+Step: 560 out of 1683
+Step: 576 out of 1683
+Step: 592 out of 1683
+Step: 608 out of 1683
+Step: 624 out of 1683
+Step: 640 out of 1683
+Step: 656 out of 1683
+Step: 672 out of 1683
+Step: 688 out of 1683
+Step: 704 out of 1683
+Step: 720 out of 1683
+Step: 736 out of 1683
+Step: 752 out of 1683
+Step: 768 out of 1683
+Step: 784 out of 1683
+Step: 800 out of 1683
+Step: 816 out of 1683
+Step: 832 out of 1683
+Step: 848 out of 1683
+Step: 864 out of 1683
+Step: 880 out of 1683
+Step: 896 out of 1683
+Step: 912 out of 1683
+Step: 928 out of 1683
+Step: 944 out of 1683
+Step: 960 out of 1683
+Step: 976 out of 1683
+Step: 992 out of 1683
+Step: 1008 out of 1683
+Step: 1024 out of 1683
+Step: 1040 out of 1683
+Step: 1056 out of 1683
+Step: 1072 out of 1683
+Step: 1088 out of 1683
+Step: 1104 out of 1683
+Step: 1120 out of 1683
+Step: 1136 out of 1683
+Step: 1152 out of 1683
+Step: 1168 out of 1683
+Step: 1184 out of 1683
+Step: 1200 out of 1683
+Step: 1216 out of 1683
+Step: 1232 out of 1683
+Step: 1248 out of 1683
+Step: 1264 out of 1683
+Step: 1280 out of 1683
+Step: 1296 out of 1683
+Step: 1312 out of 1683
+Step: 1328 out of 1683
+Step: 1344 out of 1683
+Step: 1360 out of 1683
+Step: 1376 out of 1683
+Step: 1392 out of 1683
+Step: 1408 out of 1683
+Step: 1424 out of 1683
+Step: 1440 out of 1683
+Step: 1456 out of 1683
+Step: 1472 out of 1683
+Step: 1488 out of 1683
+Step: 1504 out of 1683
+Step: 1520 out of 1683
+Step: 1536 out of 1683
+Step: 1552 out of 1683
+Step: 1568 out of 1683
+Step: 1584 out of 1683
+Step: 1600 out of 1683
+Step: 1616 out of 1683
+Step: 1632 out of 1683
+Step: 1648 out of 1683
+Step: 1664 out of 1683
+Step: 1680 out of 1683
+Equilibrate time: 44.89911198616028
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 747928
+Step: 7479 out of 747928
+Step: 14958 out of 747928
+Step: 22437 out of 747928
+Step: 29916 out of 747928
+Step: 37395 out of 747928
+Step: 44874 out of 747928
+Step: 52353 out of 747928
+Step: 59832 out of 747928
+Step: 67311 out of 747928
+Step: 74790 out of 747928
+Step: 82269 out of 747928
+Step: 89748 out of 747928
+Step: 97227 out of 747928
+Step: 104706 out of 747928
+Step: 112185 out of 747928
+Step: 119664 out of 747928
+Step: 127143 out of 747928
+Step: 134622 out of 747928
+Step: 142101 out of 747928
+Step: 149580 out of 747928
+Step: 157059 out of 747928
+Step: 164538 out of 747928
+Step: 172017 out of 747928
+Step: 179496 out of 747928
+Step: 186975 out of 747928
+Step: 194454 out of 747928
+Step: 201933 out of 747928
+Step: 209412 out of 747928
+Step: 216891 out of 747928
+Step: 224370 out of 747928
+Step: 231849 out of 747928
+Step: 239328 out of 747928
+Step: 246807 out of 747928
+Step: 254286 out of 747928
+Step: 261765 out of 747928
+Step: 269244 out of 747928
+Step: 276723 out of 747928
+Step: 284202 out of 747928
+Step: 291681 out of 747928
+Step: 299160 out of 747928
+Step: 306639 out of 747928
+Step: 314118 out of 747928
+Step: 321597 out of 747928
+Step: 329076 out of 747928
+Step: 336555 out of 747928
+Step: 344034 out of 747928
+Step: 351513 out of 747928
+Step: 358992 out of 747928
+Step: 366471 out of 747928
+Step: 373950 out of 747928
+Step: 381429 out of 747928
+Step: 388908 out of 747928
+Step: 396387 out of 747928
+Step: 403866 out of 747928
+Step: 411345 out of 747928
+Step: 418824 out of 747928
+Step: 426303 out of 747928
+Step: 433782 out of 747928
+Step: 441261 out of 747928
+Step: 448740 out of 747928
+Step: 456219 out of 747928
+Step: 463698 out of 747928
+Step: 471177 out of 747928
+Step: 478656 out of 747928
+Step: 486135 out of 747928
+Step: 493614 out of 747928
+Step: 501093 out of 747928
+Step: 508572 out of 747928
+Step: 516051 out of 747928
+Step: 523530 out of 747928
+Step: 531009 out of 747928
+Step: 538488 out of 747928
+Step: 545967 out of 747928
+Step: 553446 out of 747928
+Step: 560925 out of 747928
+Step: 568404 out of 747928
+Step: 575883 out of 747928
+Step: 583362 out of 747928
+Step: 590841 out of 747928
+Step: 598320 out of 747928
+Step: 605799 out of 747928
+Step: 613278 out of 747928
+Step: 620757 out of 747928
+Step: 628236 out of 747928
+Step: 635715 out of 747928
+Step: 643194 out of 747928
+Step: 650673 out of 747928
+Step: 658152 out of 747928
+Step: 665631 out of 747928
+Step: 673110 out of 747928
+Step: 680589 out of 747928
+Step: 688068 out of 747928
+Step: 695547 out of 747928
+Step: 703026 out of 747928
+Step: 710505 out of 747928
+Step: 717984 out of 747928
+Step: 725463 out of 747928
+Step: 732942 out of 747928
+Step: 740421 out of 747928
+Step: 747900 out of 747928
+Main time: 29119.631029367447

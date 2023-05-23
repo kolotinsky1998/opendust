@@ -1,0 +1,47 @@
+#########################################
+##### Plasma parameters in SI units #####
+#########################################
+
+
+Neutral gas temperature T_n = 290 K
+Electron temperature T_e = 30000 K
+Unperturbed density of the plasma in the quasineutral plasma region n_inf = 100000000000000.0 1/m**3
+Mach number of the ions entering the simulation domain  M = 0.45354497647395076
+Ion mass m_i = 6.6335209e-26 kg
+Electron Debye radius r_D_e = 0.0011952706178887662 m
+Bohm velocity v_B = 2498.7926383157724 m/s
+Electron plasma frequency w_p_e = 564628083.7952757 radian/s
+Ion plasma frequency w_p_i = 2090566.438192421 radian/s
+Thermal neutral gas velocity v_T = 245.67931321795072 m/s
+Ion flow velocity v_fl = 1133.3148483582083 m/s
+Ion-neutral collision frequency w_c = 5533483.89173499 1/s
+Order of external electric field: 2
+E_0 = 2600 (V/m)
+alpha = 2396160.0 (V/m^2)
+beta = 0 (V/m^3)
+z1 = 0 (m)
+z7 = 0.0029881765447219155 (m)
+
+
+Main simulation parameters:
+#########################################
+### Simulation parameters in SI units ###
+#########################################
+
+
+Radius of the cylindrical computational domain R = 0.0014940882723609578 m
+Height of the cylindrical computational domain H = 0.005976353089443831 m
+Number of superions N = 65536
+Number of ions in one superion N_s = 63.95267339533143
+Integration time step d_t = 3.9221227944196696e-10 s
+Number of time steps n = 3831
+
+
+Iteration: 1
+#########################################
+###        Start simulation           ###
+#########################################
+
+
+Step: 0 out of 3831
+Main time: 62.50928592681885

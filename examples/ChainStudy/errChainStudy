@@ -1,0 +1,2 @@
+/home/avtimofeev/opendust/examples/ChainStudy/launch.py:226: RuntimeWarning: divide by zero encountered in double_scalars
+  E_z[p][i] = -(F_io[p][i][2] + F_ic[p][i][2] + F_dd[p][i][2] + m_p * g) / q[p][i]

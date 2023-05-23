@@ -48,7 +48,7 @@ stores plasma parameters in SI units in case of matthews method
 """
 
 class PlasmaParametersInSIUnitsMatthews:
-    def __init__(self, T_n, T_e, n_inf, Phi_expression, Phi_parameters, M, w_c, m_i):
+    def __init__(self, T_n, T_e, n_inf, externalFieldOrder, Phi_parameters, M, w_c, m_i):
         """! Initialize PlasmaParametersInSIUnitsMatthews class
         @param T_n      neutral gas temperature
         @param T_e      electron temperature
@@ -62,7 +62,7 @@ class PlasmaParametersInSIUnitsMatthews:
         self.T_n = T_n
         self.T_e = T_e
         self.n_inf = n_inf
-        self.Phi_expression = Phi_expression
+        self.externalFieldOrder = externalFieldOrder
         self.Phi_parameters = Phi_parameters
         self.M = M
         self.m_i = m_i
@@ -107,7 +107,7 @@ class PlasmaParametersInSIUnitsMatthews:
         print("Thermal neutral gas velocity v_T = {} m/s".format(self.v_T))
         print("Ion flow velocity v_fl = {} m/s".format(self.v_fl))
         print("Ion-neutral collision frequency w_c = {} 1/s".format(self.w_c))
-        print("Expression for the external electric field along z-axis:\nE = {} V/m".format(self.Phi_expression))
+        print("Order of external electric field: {}".format(self.externalFieldOrder))
         for key in self.Phi_parameters:
             print("{} = {} ({})".format(key,self.Phi_parameters[key][0], self.Phi_parameters[key][1]))
         print("\n")
@@ -172,6 +172,7 @@ class OutputParameters:
         csvOutputFileName="",
         xyzOutputFileName="",
         restartFileName="",
+        trapFileName="",
     ):
         """! Initialize SimulatioParametersInSIUnits class
         @param nOutput      each nOutput step general information is printed to a console
@@ -179,12 +180,14 @@ class OutputParameters:
         @param csvOutputFileName    basename of the CSV-format files where coordinates of superions are recorded
         @param xyzOutputFileName    name of the XYZ-format file where coordinates of superions are recorded
         @param restartFileName      name of the restart file where ion system state is written
+        @param trapFileName         name of the file where radial trap coefficients are written
         """
         self.nOutput = nOutput
         self.nFileOutput = nFileOutput
         self.csvOutputFileName = csvOutputFileName
         self.xyzOutputFileName = xyzOutputFileName
         self.restartFileName = restartFileName
+        self.trapFileName = trapFileName
 
 
 """ OpenDust class 
@@ -237,8 +240,8 @@ class OpenDust:
             (plasmaParametersInSIUnits.m_i * self.N_s * kg).to("amu").value
         )
 
-        self.Phi_expression = plasmaParametersInSIUnits.Phi_expression
         self.Phi_parameters = plasmaParametersInSIUnits.Phi_parameters
+        self.externalFieldOrder = plasmaParametersInSIUnits.externalFieldOrder
    
         self.w_c = float((plasmaParametersInSIUnits.w_c / s).to("1/ps").value)
 
@@ -297,7 +300,7 @@ class OpenDust:
             )
             self.dustParticleForceLines.append(_dustParticleForceLine)
 
-    def simulate(self, deviceIndex = "0", cutOff = False, toRestartFileName="", considerTrap = True):
+    def simulate(self, deviceIndex = "0", cutOff = False, toRestartFileName="", considerTrap = True, trapFileName=""):
         """! Conduct simulation
         @param palatformName    name of the platform used for calculation
         @param restartFileName  name of the restart file to read ion positions and velocities
@@ -431,15 +434,30 @@ class OpenDust:
                     potential_line = potential[j]
                     alpha[0][j], alpha[1][j], alpha[2][j], alpha[3][j], alpha[4][j] = -np.linalg.lstsq(A, potential_line, rcond=None)[0] * N
                 return alpha
-
-            alphaTrap = computeAndFitBackgroundPotential(self.R, self.H, self.r_D_e, self.N, position)
-
+            if trapFileName == "":
+                alphaTrap = computeAndFitBackgroundPotential(self.R, self.H, self.r_D_e, self.N, position)
+            else:
+                _alpha_0 = []
+                _alpha_1 = []
+                _alpha_2 = []
+                _alpha_3 = []
+                _alpha_4 = []
+                _file = open(trapFileName, 'r')
+                for _line in _file.readlines():
+                    _alpha_0.append(float(_line.split("\t")[0]))
+                    _alpha_1.append(float(_line.split("\t")[1]))
+                    _alpha_2.append(float(_line.split("\t")[2]))
+                    _alpha_3.append(float(_line.split("\t")[3]))
+                    _alpha_4.append(float(_line.split("\t")[4]))
+                alphaTrap = np.array([np.array(_alpha_0), np.array(_alpha_1), np.array(_alpha_2), np.array(_alpha_3), np.array(_alpha_4)])
+            
+            alpha_0 = mm.Continuous1DFunction(alphaTrap[0], -self.H/2.0, self.H/2.0)
             alpha_1 = mm.Continuous1DFunction(alphaTrap[1], -self.H/2.0, self.H/2.0)
             alpha_2 = mm.Continuous1DFunction(alphaTrap[2], -self.H/2.0, self.H/2.0)
             alpha_3 = mm.Continuous1DFunction(alphaTrap[3], -self.H/2.0, self.H/2.0)
             alpha_4 = mm.Continuous1DFunction(alphaTrap[4], -self.H/2.0, self.H/2.0)
 
-            trapIonForceLine = "{}*(alpha_1(h)*r^2+alpha_2(h)*r^4+alpha_3(h)*r^6+alpha_4(h)*r^8)".format(
+            trapIonForceLine = "{}*(alpha_0(h) + alpha_1(h)*r^2+alpha_2(h)*r^4+alpha_3(h)*r^6+alpha_4(h)*r^8)".format(
                 self.q_s
                 * self.q_s
                 / self.plasmaParametersInSIUnits.r_D_e
@@ -448,9 +466,10 @@ class OpenDust:
             )
 
             trapIonForceLine += "; r = sqrt(x1^2+y1^2)/{}; h = z1/{}".format(
-                self.r_D_e, self.r_D_e
+                self.r_D_e, 1
             )
             trapIonForce = mm.CustomCompoundBondForce(1,trapIonForceLine)
+            trapIonForce.addTabulatedFunction("alpha_0", alpha_0)
             trapIonForce.addTabulatedFunction("alpha_1", alpha_1)
             trapIonForce.addTabulatedFunction("alpha_2", alpha_2)
             trapIonForce.addTabulatedFunction("alpha_3", alpha_3)
@@ -459,12 +478,19 @@ class OpenDust:
 
 
         """ Define external electric field force """
-        externalFieldForceLine = self.Phi_expression + "*q_s; "
-        lengthConversionIndex = 0.0
         lengthConversion = (1 * nm).to("m").value
-        for key in self.Phi_parameters:
-            externalFieldForceLine += "{} = {}; ".format(key, self.Phi_parameters[key][0] * self.externalFieldConversionCoefficient * lengthConversion**lengthConversionIndex)
-            lengthConversionIndex += 1.0
+        if self.externalFieldOrder == 0:
+            externalFieldForceLine = "-E_0*z*q_s; "
+            externalFieldForceLine += "E_0={}; ".format(self.Phi_parameters['E_0'][0]*self.externalFieldConversionCoefficient)
+        elif self.externalFieldOrder == 2:
+            externalFieldForceLine = "(-z*(E_0 + alpha*z1 + beta*z1^2)*step(z1-z) - z1*(E_0 + alpha*z1 + beta*z1^2)*step(z-z1) - ((E_0*z + alpha*z^2/2 + beta*z^3/3)-(E_0*z1 + alpha*z1^2/2 + beta*z1^3/3))*step(z-z1)*step(z7-z)-((E_0*z7 + alpha*z7^2/2 + beta*z7^3/3)-(E_0*z1 + alpha*z1^2/2 + beta*z1^3/3))*step(z-z7)-(E_0 + alpha*z7 + beta*z7^2)*z*step(z-z7))*q_s; "
+            #externalFieldForceLine = "(-(E_0 + alpha*z1 + beta*z1^2)-1/(1+exp(-(z-z1)/(0.02*r_D_e)))*(z-z1)^2*(3*alpha+2*beta*(2*z1+z))/6.0)*q_s; "
+            externalFieldForceLine += "r_D_e={}; ".format(self.r_D_e)
+            externalFieldForceLine += "z1={}; ".format(float((self.Phi_parameters['z1'][0] * m).to("nm").value))
+            externalFieldForceLine += "z7={}; ".format(float((self.Phi_parameters['z7'][0] * m).to("nm").value))
+            externalFieldForceLine += "E_0={}; ".format(self.Phi_parameters['E_0'][0]*self.externalFieldConversionCoefficient)
+            externalFieldForceLine += "alpha={}; ".format(self.Phi_parameters['alpha'][0]*self.externalFieldConversionCoefficient * lengthConversion)
+            externalFieldForceLine += "beta={}; ".format(self.Phi_parameters['beta'][0]*self.externalFieldConversionCoefficient * lengthConversion**2)
         externalFieldForceLine += "q_s={}".format(self.q_s)
         externalFieldForce = mm.CustomExternalForce(externalFieldForceLine)
 
@@ -583,17 +609,16 @@ class OpenDust:
         if considerTrap:
             integrator.addComputePerDof("v", "v+0.5*dt*f0/m")
             integrator.addComputePerDof("v", "v+0.5*dt*f1/m")
-            integrator.addComputePerDof("v", "vector(_x(v+0.5*dt*f2/m), _y(v+0.5*dt*f2/m), _z(v))")
+            integrator.addComputePerDof("v", "v+0.5*dt*f2/m")
             integrator.addComputePerDof("x", "x+dt*v")
             integrator.addComputePerDof("v", "v+0.5*dt*f0/m")
             integrator.addComputePerDof("v", "v+0.5*dt*f1/m")
-            integrator.addComputePerDof("v", "vector(_x(v+0.5*dt*f2/m), _y(v+0.5*dt*f2/m), _z(v))")
+            integrator.addComputePerDof("v", "v+0.5*dt*f2/m")
+
         else:
             integrator.addComputePerDof("v", "v+0.5*dt*f0/m")
-            integrator.addComputePerDof("v", "vector(_x(v), _y(v), _z(v+0.5*dt*f1/m))")
             integrator.addComputePerDof("x", "x+dt*v")
             integrator.addComputePerDof("v", "v+0.5*dt*f0/m")
-            integrator.addComputePerDof("v", "vector(_x(v), _y(v), _z(v+0.5*dt*f1/m))")
 
 
         for p in range(self.numberOfDustParticles):
@@ -625,6 +650,8 @@ class OpenDust:
         inside_dusts_string = ""
         for p in range(self.numberOfDustParticles):
             inside_dusts_string += "+inside_dust_p" + str(p)
+
+        integrator.addComputePerDof("outside_domain_z", "outside_domain_z" + inside_dusts_string)
 
         for p in range(self.numberOfDustParticles):
             integrator.addComputeSum("delta_q_p" + str(p), "inside_dust_p" + str(p))
@@ -719,6 +746,7 @@ class OpenDust:
         """ Create simulation context """
         platform = mm.Platform.getPlatformByName(platformName)
         properties = {'DeviceIndex': deviceIndex, 'Precision': 'single'}
+
         context = mm.Context(system, integrator, platform, properties)
         context.setPositions(position)
         context.setVelocities(velocity)
@@ -779,13 +807,16 @@ class OpenDust:
             """ Write state to a restart file """
             if i == self.n - 1:
                 if self.outputParameters.restartFileName != "":
-                    restartFile = open(restartFileName, "w")
+                    restartFile = open(self.outputParameters.restartFileName, "w")
                     state = context.getState(True, True)
                     position_array = state.getPositions(True)
-                    position_array = state.getVelocities(True)
-                    v_x = np.transpose(position_array)[0]
-                    v_y = np.transpose(position_array)[1]
-                    v_z = np.transpose(position_array)[2]
+                    velocity_array = state.getVelocities(True)
+                    x = np.transpose(position_array)[0]
+                    y = np.transpose(position_array)[1]
+                    z = np.transpose(position_array)[2]
+                    v_x = np.transpose(velocity_array)[0]
+                    v_y = np.transpose(velocity_array)[1]
+                    v_z = np.transpose(velocity_array)[2]
                     for j in range(self.N):
                         restartFile.write(
                             "{}\t{}\t{}\t{}\t{}\t{}\n".format(
@@ -793,6 +824,13 @@ class OpenDust:
                             )
                         )
                     restartFile.close()
+            """ Write state to a restart file """
+            if i == self.n - 1:
+                if self.outputParameters.trapFileName != "":
+                    trapFile = open(self.outputParameters.trapFileName, "w")
+                    for j in range(len(alphaTrap[1])):
+                        trapFile.write("{}\t{}\t{}\t{}\t{}\n".format(alphaTrap[0][j], alphaTrap[1][j], alphaTrap[2][j], alphaTrap[3][j], alphaTrap[4][j]))
+                    trapFile.close()
 
             """ Dust particles' charges calculation """
             for p in range(self.numberOfDustParticles):
@@ -952,20 +990,20 @@ class OpenDust:
                     r_D_e = plasmaParameters.r_D_e
                     k = 1.0 / (plasmaParameters.eps_0 * 4.0 * np.pi)
                     
-                    forceR = (-2 * alpha_1(z) * r) / r_D_e ** 2
-                    forceR += (-4 * alpha_2(z) * r**3) / r_D_e**4
-                    forceR += (-6 * alpha_3(z) * r**5) / r_D_e**6
-                    forceR += (-8 * alpha_4(z) * r**7) / r_D_e**8
+                    forceR = (-2 * alpha_1(z/ r_D_e) * r) / r_D_e ** 2
+                    forceR += (-4 * alpha_2(z/ r_D_e) * r**3) / r_D_e**4
+                    forceR += (-6 * alpha_3(z/ r_D_e) * r**5) / r_D_e**6
+                    forceR += (-8 * alpha_4(z/ r_D_e) * r**7) / r_D_e**8
 
                     forceR *= k * q * q_s / r_D_e
 
-                    forceH = (-alpha_0_z(z))
-                    forceH *= (-alpha_1_z(z) * r**2) / r_D_e ** 2
-                    forceH *= (-alpha_2_z(z) * r**4) / r_D_e ** 4
-                    forceH *= (-alpha_3_z(z) * r**6) / r_D_e ** 6
-                    forceH *= (-alpha_4_z(z) * r**8) / r_D_e ** 8
+                    forceH = (-alpha_0_z(z/ r_D_e)) / r_D_e
+                    forceH += (-alpha_1_z(z/ r_D_e) * r**2) / r_D_e ** 2 / r_D_e
+                    forceH += (-alpha_2_z(z/ r_D_e) * r**4) / r_D_e ** 4 / r_D_e
+                    forceH += (-alpha_3_z(z/ r_D_e) * r**6) / r_D_e ** 6 / r_D_e
+                    forceH += (-alpha_4_z(z/ r_D_e) * r**8) / r_D_e ** 8 / r_D_e
 
-                    forceH *= k * q * q_s / r_D_e
+                    forceH *= (k * q * q_s / r_D_e)
 
                     if r == 0:
                         forceX = 0
@@ -1041,17 +1079,16 @@ class OpenDust:
                 """External electic field forces """
                 _q_p = self.dustParticles[p].q[i]
                 _z_p = float((self.dustParticles[p].z * nm).to("m").value)
-                Phi_expression = self.Phi_expression.replace('^','**')
-                externalFieldZ_expression = diff(Phi_expression, symbols('z'))
-                Phi_parameters = []
-                for key in self.Phi_parameters:
-                    Phi_parameters.append((key,self.Phi_parameters[key][0]))
-                Phi_parameters.append(('z',_z_p))
-                Phi_parameters = dict(Phi_parameters)
-
                 _forceExternalFieldX = 0
                 _forceExternalFieldY = 0
-                _forceExternalFieldZ = _q_p * externalFieldZ_expression.evalf(20, subs=Phi_parameters)
+                if self.externalFieldOrder == 0:
+                    E_0 = self.Phi_parameters['E_0'][0]
+                    _forceExternalFieldZ = _q_p * (E_0)
+                elif self.externalFieldOrder == 2:
+                    E_0 = self.Phi_parameters['E_0'][0]
+                    alpha = self.Phi_parameters['alpha'][0]
+                    beta = self.Phi_parameters['beta'][0]
+                    _forceExternalFieldZ = _q_p * (E_0+ alpha* _z_p + beta* _z_p**2)
 
                 self.dustParticles[p].forceExternalField[i][
                     0
