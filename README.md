@@ -34,7 +34,7 @@ https://github.com/kolotinsky1998/opendust/tree/main/tutorial
 ##  How to cite
 In case of usage OpenDust please cite the article:
 
-OpenDust: A fast GPU-accelerated code for calculation forces, acting on microparticles in a plasma flow, D.A. Kolotinskii, A.V. Timofeev
+Kolotinskii D., Timofeev A. OpenDust: A fast GPU-accelerated code for the calculation of forces acting on microparticles in a plasma flow //Computer Physics Communications. – 2023. – Т. 288. – С. 108746.
 
 ##  Author's contacts
 
