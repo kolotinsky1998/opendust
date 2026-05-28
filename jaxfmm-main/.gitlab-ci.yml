@@ -1,0 +1,63 @@
+default:
+  interruptible: true
+
+.test_template:
+  stage: test
+  variables:
+    PYTEST_ADDOPTS: "--color=yes"
+  script: python -m pytest --verbose
+
+.cpu_template:
+  extends: .test_template
+  image: mambaorg/micromamba:jammy
+  before_script:
+    - micromamba install -y -n base -c conda-forge "python=$PYTHON_VERSION"
+    - python --version
+    - pip install .[dev]
+  tags:
+    - saas-linux-medium-amd64
+
+.gpu_template:
+  extends: .test_template
+  image: mambaorg/micromamba:jammy-cuda-12.3.1
+  before_script:
+    - micromamba install -y -n base -c conda-forge "python=$PYTHON_VERSION"
+    - python --version
+    - nvidia-smi
+    - pip install .[dev,cuda]
+  tags:
+    - saas-linux-medium-amd64-gpu-standard
+
+# test_py3_11_gpu:
+#   extends: .gpu_template
+#   variables:
+#     PYTHON_VERSION: "3.11"
+
+test_py3_11_cpu:
+  extends: .cpu_template
+  variables:
+    PYTHON_VERSION: "3.11"
+
+deploy_pypi:
+  stage: deploy
+  image: !reference [.cpu_template, image]
+  before_script:
+    - micromamba install -y -n base -c conda-forge 'python=3.11' make pandoc
+    - python -m pip install --upgrade twine
+    - python -m pip install --upgrade build
+  variables:
+    TWINE_USERNAME: __token__
+    TWINE_PASSWORD: ${PYPI_TOKEN}
+  script:
+    - python -m build
+    - python -m twine upload dist/*
+  rules:
+    - if: $CI_COMMIT_TAG
+  interruptible: false
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_REF_NAME
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "web"

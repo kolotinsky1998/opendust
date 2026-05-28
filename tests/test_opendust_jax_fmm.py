@@ -1,0 +1,36 @@
+import sys
+from pathlib import Path
+
+import jax.numpy as jnp
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+JAXFMM_DIR = REPO_ROOT / "jaxfmm-main"
+for path in (SRC_DIR, JAXFMM_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+pytest.importorskip("jaxfmm")
+
+from opendust_jax import (
+    CylinderDomain,
+    build_fmm_tree,
+    compute_force_metrics,
+    direct_coulomb_forces,
+    fmm_coulomb_forces,
+    sample_uniform_cylinder,
+)
+
+
+def test_fmm_coulomb_forces_match_direct_reference_smoke():
+    domain = CylinderDomain(R=5.0e-4, H=1.0e-3)
+    positions = sample_uniform_cylinder(domain, 512, seed=11)
+    charges = jnp.full((512,), 1.60217662e-19)
+
+    tree = build_fmm_tree(positions, n_max=64, theta=0.77, p=4)
+    direct = direct_coulomb_forces(positions, charges, batch_size=128)
+    fmm = fmm_coulomb_forces(positions, charges, tree=tree)
+    metrics = compute_force_metrics(direct, fmm)
+
+    assert metrics.relative_l2 < 2.0e-2

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jaxFMM"
+version = "0.2.0"
+description = "Adaptive Fast Multipole Method with Laplace kernel in JAX."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["jax", "FMM", "potential", "treecode", "N-body"]
+authors = [{ name = "Robert Kraft", email = "robert.kraft@univie.ac.at" }]
+# maintainers = [
+#   { name = "A. Great Maintainer", email = "maintainer@example.com" },
+# ]
+classifiers = [
+  "Development Status :: 3 - Alpha",    # 4 - Beta, 5 - Production
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Physics",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = ["jax"]
+
+[project.optional-dependencies]
+cuda = ["jax[cuda]"]
+dev = ["pytest", "pyvista", "numpy", "matplotlib"]
+
+[project.urls]
+"Homepage" = "https://gitlab.com/jaxfmm/jaxfmm"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+# addopts = "-ra -q"
+testpaths = [
+    "tests"
+]

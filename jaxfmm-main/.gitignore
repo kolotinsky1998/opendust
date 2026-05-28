@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.cpp
+
+# build
+.pytest_cache/
+build/
+*.egg-info/
+
+# vim
+*.swp
+
+# docs build files
+docs/_build
+
+# local dev folder
+dev
