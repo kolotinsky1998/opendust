@@ -44,6 +44,7 @@ def _evaluate_candidate(
     p: int,
     theta: float,
     n_max: int,
+    backend: str,
 ) -> tuple[dict[str, float], jnp.ndarray, jnp.ndarray]:
     t0 = time.perf_counter()
     tree = build_yukawa_tree(
@@ -62,6 +63,7 @@ def _evaluate_candidate(
         kappa=kappa,
         eps0=config.eps0,
         tree=tree,
+        backend=backend,
     )
     forces_fmm.block_until_ready()
     fmm_time = time.perf_counter() - t0
@@ -84,6 +86,7 @@ def _evaluate_candidate(
             "p": p,
             "theta": theta,
             "n_max": n_max,
+            "backend": backend,
             "tree_build_s": tree_time,
             "yukawa_fmm_force_s": fmm_time,
             "direct_reference_s": direct_time,
@@ -106,8 +109,8 @@ def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, fl
     best_metrics = None
     best_forces_direct = None
     best_forces_fmm = None
-    for p, theta, n_max in config.accuracy_candidates:
-        print(f"  candidate: p={p}, theta={theta}, n_max={n_max}")
+    for p, theta, n_max, backend in config.accuracy_candidates:
+        print(f"  candidate: backend={backend}, p={p}, theta={theta}, n_max={n_max}")
         metrics_dict, forces_direct, forces_fmm = _evaluate_candidate(
             config,
             positions,
@@ -116,6 +119,7 @@ def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, fl
             p,
             theta,
             n_max,
+            backend,
         )
         attempts.append(metrics_dict)
         print(
@@ -155,7 +159,8 @@ def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, fl
 
     title = (
         f"Yukawa FMM validation: N={config.n_particles}, p={metrics_dict['p']}, "
-        f"theta={metrics_dict['theta']}, r_D={debye_radius_m:.2e} m, "
+        f"theta={metrics_dict['theta']}, backend={metrics_dict['backend']}, "
+        f"r_D={debye_radius_m:.2e} m, "
         f"rel L2={metrics_dict['relative_l2']:.3e}"
     )
     plot_force_scatter(

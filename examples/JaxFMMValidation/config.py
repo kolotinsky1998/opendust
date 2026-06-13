@@ -31,11 +31,15 @@ class YukawaValidationConfig(CoulombValidationConfig):
     theta: float = 0.45
     n_max: int = 64
     debye_radius_factors: tuple[float, ...] = (0.5, 1.0, 2.0)
-    accuracy_candidates: tuple[tuple[int, float, int], ...] = (
-        (8, 0.45, 64),
-        (8, 0.30, 64),
-        (8, 0.20, 64),
-        (8, 0.10, 64),
+    accuracy_candidates: tuple[tuple[int, float, int, str], ...] = (
+        (4, 0.45, 64, "spherical"),
+        (6, 0.40, 64, "spherical"),
+        (8, 0.35, 64, "spherical"),
+        (3, 0.45, 64, "taylor"),
+        (3, 0.30, 64, "taylor"),
+        (3, 0.20, 64, "taylor"),
+        (8, 0.45, 64, "chebyshev"),
+        (8, 0.30, 64, "chebyshev"),
     )
     output_dir: Path = Path(__file__).resolve().parent / "output_yukawa"
 

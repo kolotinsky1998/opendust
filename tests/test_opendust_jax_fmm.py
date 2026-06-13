@@ -47,7 +47,7 @@ def test_yukawa_fmm_forces_match_direct_reference_smoke():
 
     tree = build_yukawa_tree(positions, n_max=64, theta=0.77, p=4)
     direct = direct_yukawa_forces(positions, charges, kappa=kappa, batch_size=64)
-    fmm = yukawa_fmm_forces(positions, charges, kappa=kappa, tree=tree)
+    fmm = yukawa_fmm_forces(positions, charges, kappa=kappa, tree=tree, backend="chebyshev")
     metrics = compute_force_metrics(direct, fmm)
 
     assert metrics.relative_l2 < 5.0e-2
