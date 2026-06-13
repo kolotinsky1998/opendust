@@ -1,4 +1,4 @@
-"""Direct pairwise Coulomb reference solvers in SI units."""
+"""Direct pairwise Coulomb and Yukawa reference solvers in SI units."""
 
 from __future__ import annotations
 
@@ -88,4 +88,93 @@ def direct_coulomb_forces(
 
     positions, charges = _validate_inputs(positions, charges)
     field = direct_coulomb_field(positions, charges, eps0=eps0, batch_size=batch_size)
+    return charges[:, None] * field
+
+
+@jax.jit
+def _direct_yukawa_field_all_pairs(
+    positions: jax.Array, charges: jax.Array, kappa: float, eps0: float
+) -> jax.Array:
+    diff = positions[:, None, :] - positions[None, :, :]
+    r = jnp.linalg.norm(diff, axis=-1)
+    inv_r = jnp.where(r == 0.0, 0.0, 1.0 / r)
+    screened = jnp.exp(-kappa * r)
+    radial = screened * (inv_r**3 + kappa * inv_r**2)
+    field = jnp.sum(charges[None, :, None] * diff * radial[:, :, None], axis=1)
+    return field / (4.0 * jnp.pi * eps0)
+
+
+@partial(jax.jit, static_argnames=("batch_size",))
+def _direct_yukawa_field_batched(
+    positions: jax.Array,
+    charges: jax.Array,
+    kappa: float,
+    eps0: float,
+    batch_size: int,
+) -> jax.Array:
+    n_particles = positions.shape[0]
+    n_batches = (n_particles + batch_size - 1) // batch_size
+    padded_n = n_batches * batch_size
+    pad = padded_n - n_particles
+    padded_positions = jnp.pad(positions, ((0, pad), (0, 0)))
+    batch_starts = jnp.arange(n_batches) * batch_size
+
+    def batch_field(start: jax.Array) -> jax.Array:
+        eval_positions = jax.lax.dynamic_slice(padded_positions, (start, 0), (batch_size, 3))
+        diff = eval_positions[:, None, :] - positions[None, :, :]
+        r = jnp.linalg.norm(diff, axis=-1)
+        inv_r = jnp.where(r == 0.0, 0.0, 1.0 / r)
+        screened = jnp.exp(-kappa * r)
+        radial = screened * (inv_r**3 + kappa * inv_r**2)
+        return jnp.sum(charges[None, :, None] * diff * radial[:, :, None], axis=1)
+
+    def scan_body(field_buffer: jax.Array, start: jax.Array) -> tuple[jax.Array, None]:
+        field_chunk = batch_field(start)
+        field_buffer = jax.lax.dynamic_update_slice(field_buffer, field_chunk, (start, 0))
+        return field_buffer, None
+
+    field_dtype = jnp.result_type(positions, charges, jnp.asarray(kappa), jnp.asarray(eps0))
+    field, _ = jax.lax.scan(scan_body, jnp.zeros((padded_n, 3), field_dtype), batch_starts)
+    field = field[:n_particles]
+    return field / (4.0 * jnp.pi * eps0)
+
+
+def direct_yukawa_field(
+    positions: jax.Array,
+    charges: jax.Array,
+    kappa: float,
+    eps0: float = 8.85418781762039e-12,
+    batch_size: int | None = None,
+) -> jax.Array:
+    """Evaluate the free-space Yukawa electric field by direct pairwise summation."""
+
+    positions, charges = _validate_inputs(positions, charges)
+    if kappa < 0:
+        raise ValueError("kappa must be non-negative.")
+    if eps0 <= 0:
+        raise ValueError("eps0 must be positive.")
+    if batch_size is None:
+        return _direct_yukawa_field_all_pairs(positions, charges, kappa, eps0)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive when provided.")
+    return _direct_yukawa_field_batched(positions, charges, kappa, eps0, int(batch_size))
+
+
+def direct_yukawa_forces(
+    positions: jax.Array,
+    charges: jax.Array,
+    kappa: float,
+    eps0: float = 8.85418781762039e-12,
+    batch_size: int | None = None,
+) -> jax.Array:
+    """Evaluate direct Yukawa forces on each particle in newtons."""
+
+    positions, charges = _validate_inputs(positions, charges)
+    field = direct_yukawa_field(
+        positions,
+        charges,
+        kappa=kappa,
+        eps0=eps0,
+        batch_size=batch_size,
+    )
     return charges[:, None] * field

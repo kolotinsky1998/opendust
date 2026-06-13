@@ -23,3 +23,12 @@ class CoulombValidationConfig:
 
 
 DEFAULT_CONFIG = CoulombValidationConfig()
+
+
+@dataclass(frozen=True)
+class YukawaValidationConfig(CoulombValidationConfig):
+    debye_radius_factors: tuple[float, ...] = (0.5, 1.0, 2.0)
+    output_dir: Path = Path(__file__).resolve().parent / "output_yukawa"
+
+
+DEFAULT_YUKAWA_CONFIG = YukawaValidationConfig()

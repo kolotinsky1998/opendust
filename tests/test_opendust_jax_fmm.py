@@ -16,10 +16,13 @@ pytest.importorskip("jaxfmm")
 from opendust_jax import (
     CylinderDomain,
     build_fmm_tree,
+    build_yukawa_tree,
     compute_force_metrics,
     direct_coulomb_forces,
+    direct_yukawa_forces,
     fmm_coulomb_forces,
     sample_uniform_cylinder,
+    yukawa_fmm_forces,
 )
 
 
@@ -34,3 +37,17 @@ def test_fmm_coulomb_forces_match_direct_reference_smoke():
     metrics = compute_force_metrics(direct, fmm)
 
     assert metrics.relative_l2 < 2.0e-2
+
+
+def test_yukawa_fmm_forces_match_direct_reference_smoke():
+    domain = CylinderDomain(R=5.0e-4, H=1.0e-3)
+    positions = sample_uniform_cylinder(domain, 256, seed=12)
+    charges = jnp.full((256,), 1.60217662e-19)
+    kappa = 1.0 / domain.R
+
+    tree = build_yukawa_tree(positions, n_max=64, theta=0.77, p=4)
+    direct = direct_yukawa_forces(positions, charges, kappa=kappa, batch_size=64)
+    fmm = yukawa_fmm_forces(positions, charges, kappa=kappa, tree=tree)
+    metrics = compute_force_metrics(direct, fmm)
+
+    assert metrics.relative_l2 < 5.0e-2

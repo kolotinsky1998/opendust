@@ -9,9 +9,15 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from opendust_jax.direct import direct_coulomb_field, direct_coulomb_forces
+from opendust_jax.direct import (
+    direct_coulomb_field,
+    direct_coulomb_forces,
+    direct_yukawa_field,
+    direct_yukawa_forces,
+)
 from opendust_jax.geometry import CylinderDomain, points_inside_cylinder, sample_uniform_cylinder
 from opendust_jax.validation import compute_force_metrics
+from opendust_jax.yukawa_basis import modified_spherical_bessel_i, modified_spherical_bessel_k
 
 
 def test_sample_uniform_cylinder_points_are_inside():
@@ -76,3 +82,49 @@ def test_compute_force_metrics_zero_error():
 
     assert metrics.relative_l2 == 0.0
     assert metrics.max_abs_error == 0.0
+
+
+def test_single_particle_has_zero_yukawa_self_force():
+    positions = jnp.array([[0.0, 0.0, 0.0]])
+    charges = jnp.array([1.0])
+
+    forces = direct_yukawa_forces(positions, charges, kappa=2.0, eps0=1.0)
+
+    np.testing.assert_allclose(np.asarray(forces), np.zeros((1, 3)), atol=0.0)
+
+
+def test_two_equal_charges_have_equal_and_opposite_yukawa_forces():
+    positions = jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    charges = jnp.array([3.0, 3.0])
+
+    forces = direct_yukawa_forces(positions, charges, kappa=0.5, eps0=1.0)
+
+    np.testing.assert_allclose(np.asarray(forces[0]), -np.asarray(forces[1]), rtol=1e-6)
+    assert forces[0, 0] < 0.0
+    assert forces[1, 0] > 0.0
+
+
+def test_yukawa_approaches_coulomb_for_small_kappa():
+    positions = jnp.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+        ]
+    )
+    charges = jnp.array([1.0, 2.0, 4.0])
+
+    coulomb = direct_coulomb_field(positions, charges, eps0=1.0)
+    yukawa = direct_yukawa_field(positions, charges, kappa=1e-8, eps0=1.0)
+
+    np.testing.assert_allclose(np.asarray(yukawa), np.asarray(coulomb), rtol=1e-5, atol=1e-6)
+
+
+def test_yukawa_radial_basis_is_finite_near_zero():
+    x = jnp.array([0.0, 1e-10, 1e-4, 1.0])
+
+    regular = modified_spherical_bessel_i(x, 4)
+    singular = modified_spherical_bessel_k(x + 1e-6, 4)
+
+    assert bool(jnp.all(jnp.isfinite(regular)))
+    assert bool(jnp.all(jnp.isfinite(singular)))
