@@ -27,7 +27,16 @@ DEFAULT_CONFIG = CoulombValidationConfig()
 
 @dataclass(frozen=True)
 class YukawaValidationConfig(CoulombValidationConfig):
+    p: int = 8
+    theta: float = 0.45
+    n_max: int = 64
     debye_radius_factors: tuple[float, ...] = (0.5, 1.0, 2.0)
+    accuracy_candidates: tuple[tuple[int, float, int], ...] = (
+        (8, 0.45, 64),
+        (8, 0.30, 64),
+        (8, 0.20, 64),
+        (8, 0.10, 64),
+    )
     output_dir: Path = Path(__file__).resolve().parent / "output_yukawa"
 
 

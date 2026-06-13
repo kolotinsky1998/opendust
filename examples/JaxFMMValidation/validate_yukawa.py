@@ -36,20 +36,21 @@ def _block_tree(tree: dict) -> None:
         tree[key].block_until_ready()
 
 
-def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, float]:
-    kappa = 1.0 / debye_radius_m
-    case_name = f"rD_{debye_radius_m:.6e}_m".replace("+", "")
-    output_dir = Path(config.output_dir) / case_name
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"\nYukawa validation: r_D={debye_radius_m:.6e} m, kappa={kappa:.6e} 1/m")
-
+def _evaluate_candidate(
+    config,
+    positions,
+    charges,
+    kappa: float,
+    p: int,
+    theta: float,
+    n_max: int,
+) -> tuple[dict[str, float], jnp.ndarray, jnp.ndarray]:
     t0 = time.perf_counter()
     tree = build_yukawa_tree(
         positions,
-        n_max=config.n_max,
-        theta=config.theta,
-        p=config.p,
+        n_max=n_max,
+        theta=theta,
+        p=p,
     )
     _block_tree(tree)
     tree_time = time.perf_counter() - t0
@@ -80,16 +81,9 @@ def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, fl
     metrics_dict = metrics.to_dict()
     metrics_dict.update(
         {
-            "n_particles": config.n_particles,
-            "radius_m": config.radius_m,
-            "height_m": config.height_m,
-            "charge_c": config.charge_c,
-            "seed": config.seed,
-            "p": config.p,
-            "theta": config.theta,
-            "n_max": config.n_max,
-            "debye_radius_m": debye_radius_m,
-            "kappa_1_per_m": kappa,
+            "p": p,
+            "theta": theta,
+            "n_max": n_max,
             "tree_build_s": tree_time,
             "yukawa_fmm_force_s": fmm_time,
             "direct_reference_s": direct_time,
@@ -97,20 +91,76 @@ def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, fl
             "accepted": metrics.relative_l2 < config.acceptance_relative_l2,
         }
     )
+    return metrics_dict, forces_direct, forces_fmm
 
-    np.save(output_dir / "forces_direct.npy", np.asarray(forces_direct))
-    np.save(output_dir / "forces_yukawa_fmm.npy", np.asarray(forces_fmm))
+
+def _run_case(config, positions, charges, debye_radius_m: float) -> dict[str, float]:
+    kappa = 1.0 / debye_radius_m
+    case_name = f"rD_{debye_radius_m:.6e}_m".replace("+", "")
+    output_dir = Path(config.output_dir) / case_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\nYukawa validation: r_D={debye_radius_m:.6e} m, kappa={kappa:.6e} 1/m")
+
+    attempts = []
+    best_metrics = None
+    best_forces_direct = None
+    best_forces_fmm = None
+    for p, theta, n_max in config.accuracy_candidates:
+        print(f"  candidate: p={p}, theta={theta}, n_max={n_max}")
+        metrics_dict, forces_direct, forces_fmm = _evaluate_candidate(
+            config,
+            positions,
+            charges,
+            kappa,
+            p,
+            theta,
+            n_max,
+        )
+        attempts.append(metrics_dict)
+        print(
+            "  rel L2={:.3e}, accepted={}".format(
+                metrics_dict["relative_l2"],
+                metrics_dict["accepted"],
+            )
+        )
+        if best_metrics is None or metrics_dict["relative_l2"] < best_metrics["relative_l2"]:
+            best_metrics = metrics_dict
+            best_forces_direct = forces_direct
+            best_forces_fmm = forces_fmm
+        if metrics_dict["accepted"]:
+            break
+
+    assert best_metrics is not None
+    assert best_forces_direct is not None
+    assert best_forces_fmm is not None
+    metrics_dict = dict(best_metrics)
+    metrics_dict.update(
+        {
+            "n_particles": config.n_particles,
+            "radius_m": config.radius_m,
+            "height_m": config.height_m,
+            "charge_c": config.charge_c,
+            "seed": config.seed,
+            "debye_radius_m": debye_radius_m,
+            "kappa_1_per_m": kappa,
+            "attempts": attempts,
+        }
+    )
+
+    np.save(output_dir / "forces_direct.npy", np.asarray(best_forces_direct))
+    np.save(output_dir / "forces_yukawa_fmm.npy", np.asarray(best_forces_fmm))
     with (output_dir / "metrics.json").open("w", encoding="utf-8") as metrics_file:
         json.dump(metrics_dict, metrics_file, indent=2, sort_keys=True)
 
     title = (
-        f"Yukawa FMM validation: N={config.n_particles}, p={config.p}, "
-        f"theta={config.theta}, r_D={debye_radius_m:.2e} m, "
-        f"rel L2={metrics.relative_l2:.3e}"
+        f"Yukawa FMM validation: N={config.n_particles}, p={metrics_dict['p']}, "
+        f"theta={metrics_dict['theta']}, r_D={debye_radius_m:.2e} m, "
+        f"rel L2={metrics_dict['relative_l2']:.3e}"
     )
     plot_force_scatter(
-        forces_direct,
-        forces_fmm,
+        best_forces_direct,
+        best_forces_fmm,
         output_dir / "force_scatter.png",
         title=title,
     )
