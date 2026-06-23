@@ -239,6 +239,58 @@ def _spherical_harmonic_norm(l: int, m_abs: int) -> float:
     )
 
 
+def _wigner_small_d(l: int, mp: int, m: int, beta: jax.Array) -> jax.Array:
+    prefactor = jnp.sqrt(
+        float(
+            factorial(l + m)
+            * factorial(l - m)
+            * factorial(l + mp)
+            * factorial(l - mp)
+        )
+    )
+    c = jnp.cos(0.5 * beta)
+    s = jnp.sin(0.5 * beta)
+    total = 0.0
+    k_min = max(0, m - mp)
+    k_max = min(l + m, l - mp)
+    for k in range(k_min, k_max + 1):
+        denom = float(
+            factorial(l + m - k)
+            * factorial(k)
+            * factorial(mp - m + k)
+            * factorial(l - mp - k)
+        )
+        phase = (-1.0) ** (k - m + mp)
+        total = total + (
+            phase
+            * prefactor
+            / denom
+            * c ** (2 * l + m - mp - 2 * k)
+            * s ** (mp - m + 2 * k)
+        )
+    return total
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _complex_rotation_matrix_z_to_vector(rvec: jax.Array, order: int) -> jax.Array:
+    r = jnp.linalg.norm(rvec)
+    safe_r = jnp.where(r == 0.0, 1.0, r)
+    beta = jnp.arccos(jnp.clip(rvec[2] / safe_r, -1.0, 1.0))
+    alpha = jnp.arctan2(rvec[1], rvec[0])
+    n_coeff = (order + 1) ** 2
+    matrix = jnp.zeros((n_coeff, n_coeff), dtype=jnp.complex64)
+
+    for l in range(order + 1):
+        for row, mp in enumerate(range(-l, l + 1)):
+            global_row = l * l + row
+            for col, m in enumerate(range(-l, l + 1)):
+                global_col = l * l + col
+                d = _wigner_small_d(l, mp, m, beta)
+                value = jnp.exp(-1j * mp * alpha) * d
+                matrix = matrix.at[global_row, global_col].set(value)
+    return matrix
+
+
 def _associated_legendre(l: int, m_abs: int, x: jax.Array) -> jax.Array:
     pmm = jnp.ones_like(x)
     if m_abs > 0:
@@ -655,6 +707,23 @@ def _spherical_m2l_coefficients_for_pair_axial(
     distance = jnp.linalg.norm(rvec)
     matrix = _spherical_m2l_axial_matrix(distance, kappa, order)
     return matrix @ source_moments
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_m2l_coefficients_for_pair_rotated(
+    target_center: jax.Array,
+    source_center: jax.Array,
+    source_moments: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    rvec = target_center - source_center
+    distance = jnp.linalg.norm(rvec)
+    rotation = _complex_rotation_matrix_z_to_vector(rvec, order)
+    axial_matrix = _spherical_m2l_axial_matrix(distance, kappa, order)
+    aligned_moments = rotation.conj().T @ source_moments
+    aligned_locals = axial_matrix @ aligned_moments
+    return rotation @ aligned_locals
 
 
 @partial(jax.jit, static_argnames=("order",))
