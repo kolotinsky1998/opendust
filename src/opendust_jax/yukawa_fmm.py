@@ -483,16 +483,14 @@ def _spherical_m2l_coefficients_for_pair_closed(
     rvec = target_center - source_center
     translation_basis = _spherical_translation_basis(rvec, kappa, 2 * order)
     n_coeff = (order + 1) ** 2
+    contributions = (
+        (8.0 * kappa)
+        * coupling_coeffs
+        * translation_basis[big_basis_indices]
+        * source_moments[source_indices]
+    )
     local = jnp.zeros((n_coeff,), dtype=source_moments.dtype)
-
-    for idx in range(local_indices.shape[0]):
-        contribution = (
-            (8.0 * kappa)
-            * coupling_coeffs[idx]
-            * translation_basis[big_basis_indices[idx]]
-            * source_moments[source_indices[idx]]
-        )
-        local = local.at[local_indices[idx]].add(contribution)
+    local = local.at[local_indices].add(contributions)
     return local
 
 
@@ -511,14 +509,13 @@ def _spherical_regular_translate_coeffs(
     rvec = old_center - new_center
     translation_basis = _spherical_regular_translation_basis(rvec, kappa, 2 * order)
     n_coeff = (order + 1) ** 2
+    contributions = (
+        coupling_coeffs
+        * translation_basis[big_basis_indices]
+        * coeffs[source_indices]
+    )
     translated = jnp.zeros((n_coeff,), dtype=coeffs.dtype)
-    for idx in range(local_indices.shape[0]):
-        contribution = (
-            coupling_coeffs[idx]
-            * translation_basis[big_basis_indices[idx]]
-            * coeffs[source_indices[idx]]
-        )
-        translated = translated.at[local_indices[idx]].add(contribution)
+    translated = translated.at[local_indices].add(contributions)
     return translated
 
 
