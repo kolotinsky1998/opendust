@@ -82,16 +82,22 @@ def _wigner_3j(j1: int, j2: int, j3: int, m1: int, m2: int, m3: int) -> float:
     if j3 < abs(j1 - j2) or j3 > j1 + j2:
         return 0.0
 
-    delta_num = factorial(j1 + j2 - j3) * factorial(j1 - j2 + j3) * factorial(-j1 + j2 + j3)
-    delta_den = factorial(j1 + j2 + j3 + 1)
+    delta_num = float(
+        factorial(j1 + j2 - j3)
+        * factorial(j1 - j2 + j3)
+        * factorial(-j1 + j2 + j3)
+    )
+    delta_den = float(factorial(j1 + j2 + j3 + 1))
     prefactor = ((-1) ** (j1 - j2 - m3)) * np.sqrt(delta_num / delta_den)
     prefactor *= np.sqrt(
-        factorial(j1 + m1)
-        * factorial(j1 - m1)
-        * factorial(j2 + m2)
-        * factorial(j2 - m2)
-        * factorial(j3 + m3)
-        * factorial(j3 - m3)
+        float(
+            factorial(j1 + m1)
+            * factorial(j1 - m1)
+            * factorial(j2 + m2)
+            * factorial(j2 - m2)
+            * factorial(j3 + m3)
+            * factorial(j3 - m3)
+        )
     )
 
     z_min = max(0, j2 - j3 - m1, j1 - j3 + m2)
