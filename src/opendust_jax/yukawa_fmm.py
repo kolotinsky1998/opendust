@@ -1067,14 +1067,12 @@ def _eval_spherical_m2l_coefficients_closed(
 
 
 @partial(jax.jit, static_argnames=("order", "n_targets"))
-def _eval_spherical_m2l_coefficients_projected(
+def _eval_spherical_m2l_coefficients_rotated(
     centers_global: jax.Array,
     moments_global: jax.Array,
     mpl_cnct: jax.Array,
     trg_leaf_offset: int,
     n_targets: int,
-    quad_dirs: jax.Array,
-    quad_weights: jax.Array,
     kappa: float,
     order: int,
     cutoff_radius: float,
@@ -1088,12 +1086,10 @@ def _eval_spherical_m2l_coefficients_projected(
         box_distance = jnp.linalg.norm(centers_global[pair[0]] - centers_global[src_global])
 
         def compute_coeffs() -> jax.Array:
-            return _spherical_m2l_coefficients_for_pair_projected(
+            return _spherical_m2l_coefficients_for_pair_rotated(
                 centers_global[pair[0]],
                 centers_global[src_global],
                 moments_global[src_global],
-                quad_dirs,
-                quad_weights,
                 kappa,
                 order,
             )
@@ -1158,13 +1154,11 @@ def _eval_spherical_m2l_all_levels_closed(
 
 
 @partial(jax.jit, static_argnames=("order", "n_total_targets"))
-def _eval_spherical_m2l_all_levels_projected(
+def _eval_spherical_m2l_all_levels_rotated(
     centers_global: jax.Array,
     moments_global: jax.Array,
     mpl_cnct: jax.Array,
     n_total_targets: int,
-    quad_dirs: jax.Array,
-    quad_weights: jax.Array,
     kappa: float,
     order: int,
     cutoff_radius: float,
@@ -1178,12 +1172,10 @@ def _eval_spherical_m2l_all_levels_projected(
         box_distance = jnp.linalg.norm(centers_global[trg_global] - centers_global[src_global])
 
         def compute_coeffs() -> jax.Array:
-            return _spherical_m2l_coefficients_for_pair_projected(
+            return _spherical_m2l_coefficients_for_pair_rotated(
                 centers_global[trg_global],
                 centers_global[src_global],
                 moments_global[src_global],
-                quad_dirs,
-                quad_weights,
                 kappa,
                 order,
             )
@@ -1818,7 +1810,6 @@ def _yukawa_fmm_field_spherical_m2l(
         return near / (4.0 * jnp.pi * eps0)
 
     order = int(p)
-    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
     src_lvl = tree["lvl_info"][-2][1]
     trg_lvl = tree["lvl_info"][-2][0]
     src_leaf_offset = tree["src_ofs"][src_lvl]
@@ -1846,14 +1837,12 @@ def _yukawa_fmm_field_spherical_m2l(
     if tree["mpl_cnct"].size == 0:
         local_coeffs = jnp.zeros((target_centers.shape[0], n_coeff), dtype=moments_dtype)
     else:
-        local_coeffs = _eval_spherical_m2l_coefficients_projected(
+        local_coeffs = _eval_spherical_m2l_coefficients_rotated(
             tree["boxcenters"],
             moments_global,
             tree["mpl_cnct"],
             trg_leaf_offset,
             target_centers.shape[0],
-            quad_dirs,
-            quad_weights,
             kappa,
             order,
             cutoff_radius,
@@ -1940,13 +1929,11 @@ def _yukawa_fmm_field_spherical_multilevel(
             dtype=moments.dtype,
         )
     else:
-        local_coeffs_all = _eval_spherical_m2l_all_levels_projected(
+        local_coeffs_all = _eval_spherical_m2l_all_levels_rotated(
             tree["boxcenters"],
             moments,
             tree["mpl_cnct"],
             tree["trg_ofs"][max_trg_lvl + 1],
-            quad_dirs,
-            quad_weights,
             kappa,
             order,
             cutoff_radius,
