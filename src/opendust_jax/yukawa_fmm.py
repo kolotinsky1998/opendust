@@ -135,14 +135,16 @@ def _spherical_m2l_couplings(order: int) -> tuple[jax.Array, jax.Array, jax.Arra
     for local_idx, (n, nu) in enumerate(pairs):
         for source_idx, (ell, m) in enumerate(pairs):
             m_big = nu - m
-            big_l = n + ell
-            if abs(m_big) > big_l:
-                continue
-            # conj(Y_nu) = (-1)^nu Y_{n,-nu}; the Gaunt integral enforces
-            # -nu + m + M = 0, hence M = nu - m.
-            g = ((-1) ** nu) * _gaunt(n, -nu, ell, m, big_l, m_big)
-            if g != 0.0:
-                rows.append((local_idx, source_idx, big_l, m_big, 4.0 * np.pi * g))
+            for big_l in range(abs(n - ell), n + ell + 1):
+                if abs(m_big) > big_l:
+                    continue
+                # conj(Y_nu) = (-1)^nu Y_{n,-nu}; the Gaunt integral enforces
+                # -nu + m + M = 0, hence M = nu - m. For modified Helmholtz
+                # translations the angular coupling spans the full Clebsch-
+                # Gordan triangle, unlike the Laplace solid-harmonic limit.
+                g = ((-1) ** nu) * _gaunt(n, -nu, ell, m, big_l, m_big)
+                if g != 0.0:
+                    rows.append((local_idx, source_idx, big_l, m_big, 4.0 * np.pi * g))
     if not rows:
         empty_i = jnp.zeros((0,), dtype=jnp.int32)
         empty_c = jnp.zeros((0,), dtype=jnp.float32)
