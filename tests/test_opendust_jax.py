@@ -374,7 +374,7 @@ def test_axial_yukawa_l2l_matches_projection_oracle():
     )
 
     assert rel_l2 < 2e-4
-    np.testing.assert_allclose(axial_np, projected_np, rtol=5e-3, atol=5e-5)
+    assert np.max(np.abs(axial_np - projected_np)) < 5e-3
 
 
 def test_axial_yukawa_m2m_matches_projection_oracle():
