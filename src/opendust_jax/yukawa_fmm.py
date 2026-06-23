@@ -221,6 +221,27 @@ def _sphere_projection_quadrature(order: int) -> tuple[jax.Array, jax.Array]:
     )
 
 
+@lru_cache(maxsize=None)
+def _legendre_quadrature(order: int) -> tuple[jax.Array, jax.Array]:
+    n_mu = max(6 * int(order) + 24, 48)
+    mu, weights = np.polynomial.legendre.leggauss(n_mu)
+    return (
+        jnp.asarray(mu, dtype=jnp.float32),
+        jnp.asarray(weights, dtype=jnp.float32),
+    )
+
+
+def _spherical_harmonic_norm(l: int, m_abs: int) -> float:
+    return float(
+        np.sqrt(
+            (2 * l + 1)
+            / (4.0 * np.pi)
+            * factorial(l - m_abs)
+            / factorial(l + m_abs)
+        )
+    )
+
+
 def _associated_legendre(l: int, m_abs: int, x: jax.Array) -> jax.Array:
     pmm = jnp.ones_like(x)
     if m_abs > 0:
@@ -591,6 +612,52 @@ def _spherical_m2l_coefficients_for_pair_projected(
         numerator = jnp.sum(quad_weights * potentials * jnp.conj(ylm))
         coeffs.append(numerator / jnp.maximum(radial_i[ell], 1.0e-30))
     return jnp.stack(coeffs)
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_m2l_axial_matrix(
+    distance: float,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    mu, weights = _legendre_quadrature(order)
+    radius = jnp.maximum(0.35 * distance, 1.0e-12)
+    sep = jnp.sqrt(jnp.maximum(distance * distance + radius * radius + 2.0 * distance * radius * mu, 1.0e-30))
+    cos_gamma = jnp.clip((distance + radius * mu) / sep, -1.0, 1.0)
+    radial_i = modified_spherical_bessel_i(kappa * radius, order)
+    radial_k = modified_spherical_bessel_k(kappa * sep, order)
+    pairs = _lm_pairs(order)
+    n_coeff = (order + 1) ** 2
+    matrix = jnp.zeros((n_coeff, n_coeff), dtype=jnp.complex64)
+
+    for target_idx, (n, nu) in enumerate(pairs):
+        m_abs = abs(nu)
+        p_n = _associated_legendre(n, m_abs, mu)
+        norm_n = _spherical_harmonic_norm(n, m_abs)
+        denom = jnp.maximum(radial_i[n], 1.0e-30)
+        for source_idx, (ell, m) in enumerate(pairs):
+            if m != nu:
+                continue
+            p_l = _associated_legendre(ell, m_abs, cos_gamma)
+            norm_l = _spherical_harmonic_norm(ell, m_abs)
+            integral = jnp.sum(weights * radial_k[..., ell] * p_l * p_n)
+            value = (8.0 * kappa) * (2.0 * jnp.pi) * norm_n * norm_l * integral / denom
+            matrix = matrix.at[target_idx, source_idx].set(value + 0.0j)
+    return matrix
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_m2l_coefficients_for_pair_axial(
+    target_center: jax.Array,
+    source_center: jax.Array,
+    source_moments: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    rvec = target_center - source_center
+    distance = jnp.linalg.norm(rvec)
+    matrix = _spherical_m2l_axial_matrix(distance, kappa, order)
+    return matrix @ source_moments
 
 
 @partial(jax.jit, static_argnames=("order",))

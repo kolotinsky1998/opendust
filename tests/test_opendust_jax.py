@@ -27,6 +27,7 @@ from opendust_jax.yukawa_fmm import (
     _spherical_l2l_coefficients_closed,
     _spherical_l2l_coefficients_projected,
     _spherical_regular_couplings,
+    _spherical_m2l_coefficients_for_pair_axial,
     _spherical_m2l_coefficients_for_pair_projected,
     _spherical_yukawa_local_field_from_coeffs,
     _spherical_yukawa_field_from_moments,
@@ -258,6 +259,50 @@ def test_projected_yukawa_m2l_reproduces_monopole_m2p_field():
     )
 
     np.testing.assert_allclose(np.asarray(local_field), np.asarray(m2p_field), rtol=1e-3, atol=1e-6)
+
+
+def test_axial_yukawa_m2l_matches_projection_oracle():
+    kappa = 3.0
+    order = 4
+    source_center = jnp.array([0.0, 0.0, 0.0])
+    target_center = jnp.array([0.0, 0.0, 1.0])
+    source = jnp.array(
+        [
+            [
+                [0.01, -0.02, 0.03],
+                [-0.02, 0.01, -0.015],
+                [0.015, 0.025, 0.01],
+            ]
+        ]
+    )
+    charges = jnp.array([[2.0, -0.5, 1.2]])
+
+    source_moments = _compute_spherical_moments(
+        source,
+        charges,
+        source_center[None, :],
+        kappa,
+        order,
+    )[0]
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
+    projected = _spherical_m2l_coefficients_for_pair_projected(
+        target_center,
+        source_center,
+        source_moments,
+        quad_dirs,
+        quad_weights,
+        kappa,
+        order,
+    )
+    axial = _spherical_m2l_coefficients_for_pair_axial(
+        target_center,
+        source_center,
+        source_moments,
+        kappa,
+        order,
+    )
+
+    np.testing.assert_allclose(np.asarray(axial), np.asarray(projected), rtol=2e-3, atol=1e-7)
 
 
 @pytest.mark.xfail(reason="Closed Yukawa M2M translation is not derived correctly yet.")
