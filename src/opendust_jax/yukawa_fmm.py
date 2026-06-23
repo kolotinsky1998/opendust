@@ -619,6 +619,31 @@ def _spherical_regular_translate_coeffs(
 
 
 @partial(jax.jit, static_argnames=("order",))
+def _spherical_m2m_coefficients_closed(
+    parent_center: jax.Array,
+    child_center: jax.Array,
+    child_moments: jax.Array,
+    local_indices: jax.Array,
+    source_indices: jax.Array,
+    big_basis_indices: jax.Array,
+    coupling_coeffs: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    return _spherical_regular_translate_coeffs(
+        child_moments,
+        child_center,
+        parent_center,
+        local_indices,
+        source_indices,
+        big_basis_indices,
+        coupling_coeffs,
+        kappa,
+        order,
+    )
+
+
+@partial(jax.jit, static_argnames=("order",))
 def _spherical_m2m_coefficients_projected(
     parent_center: jax.Array,
     child_center: jax.Array,
@@ -708,8 +733,10 @@ def _yukawa_spherical_go_up_multipoles(
     boxcenters: jax.Array,
     src_ofs: tuple[int, ...],
     max_src_lvl: int,
-    quad_dirs: jax.Array,
-    quad_weights: jax.Array,
+    local_indices: jax.Array,
+    source_indices: jax.Array,
+    big_basis_indices: jax.Array,
+    coupling_coeffs: jax.Array,
     kappa: float,
     order: int,
     n_children: int = 8,
@@ -726,12 +753,14 @@ def _yukawa_spherical_go_up_multipoles(
         parent_local = jnp.arange(child_coeffs.shape[0]) // n_children
 
         translated = jax.vmap(
-            lambda coeffs, old_center, new_center: _spherical_m2m_coefficients_projected(
+            lambda coeffs, old_center, new_center: _spherical_m2m_coefficients_closed(
                 new_center,
                 old_center,
                 coeffs,
-                quad_dirs,
-                quad_weights,
+                local_indices,
+                source_indices,
+                big_basis_indices,
+                coupling_coeffs,
                 kappa,
                 order,
             )
@@ -1633,6 +1662,9 @@ def _yukawa_fmm_field_spherical_multilevel(
 
     order = int(p)
     quad_dirs, quad_weights = _sphere_projection_quadrature(order)
+    reg_local_indices, reg_source_indices, reg_big_basis_indices, reg_coupling_coeffs = (
+        _spherical_regular_couplings(order)
+    )
     max_src_lvl = tree["lvl_info"][-2][1]
     max_trg_lvl = tree["lvl_info"][-2][0]
     src_leaf_offset = tree["src_ofs"][max_src_lvl]
@@ -1653,8 +1685,10 @@ def _yukawa_fmm_field_spherical_multilevel(
         tree["boxcenters"],
         tree["src_ofs"],
         max_src_lvl,
-        quad_dirs,
-        quad_weights,
+        reg_local_indices,
+        reg_source_indices,
+        reg_big_basis_indices,
+        reg_coupling_coeffs,
         kappa,
         order,
     )
