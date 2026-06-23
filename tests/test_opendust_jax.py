@@ -24,9 +24,11 @@ from opendust_jax.yukawa_fmm import (
     _sphere_projection_quadrature,
     _spherical_m2m_coefficients_closed,
     _spherical_m2m_coefficients_projected,
+    _spherical_m2m_coefficients_rotated,
     _spherical_l2l_coefficients_closed,
     _spherical_l2l_coefficients_axial,
     _spherical_l2l_coefficients_projected,
+    _spherical_l2l_coefficients_rotated,
     _spherical_regular_couplings,
     _spherical_m2m_coefficients_axial,
     _spherical_m2l_coefficients_for_pair_axial,
@@ -430,6 +432,68 @@ def test_axial_yukawa_l2l_matches_projection_oracle():
     assert np.max(np.abs(axial_np - projected_np)) < 5e-3
 
 
+def test_rotated_yukawa_l2l_matches_projection_oracle():
+    kappa = 3.0
+    order = 4
+    parent_center = jnp.array([0.0, 0.0, 0.0])
+    child_center = jnp.array([0.12, -0.08, 0.2])
+    source_center = jnp.array([-0.7, 0.35, -1.0])
+    source = jnp.array(
+        [
+            [
+                [-0.69, 0.33, -1.03],
+                [-0.72, 0.36, -0.985],
+                [-0.685, 0.375, -1.01],
+            ]
+        ]
+    )
+    charges = jnp.array([[2.0, -0.5, 1.2]])
+
+    source_moments = _compute_spherical_moments(
+        source,
+        charges,
+        source_center[None, :],
+        kappa,
+        order,
+    )[0]
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
+    parent_coeffs = _spherical_m2l_coefficients_for_pair_projected(
+        parent_center,
+        source_center,
+        source_moments,
+        quad_dirs,
+        quad_weights,
+        kappa,
+        order,
+    )
+    projected = _spherical_l2l_coefficients_projected(
+        child_center,
+        parent_center,
+        parent_coeffs,
+        quad_dirs,
+        quad_weights,
+        kappa,
+        order,
+    )
+    rotated = _spherical_l2l_coefficients_rotated(
+        child_center,
+        parent_center,
+        parent_coeffs,
+        kappa,
+        order,
+    )
+
+    rotated_np = np.asarray(rotated)
+    projected_np = np.asarray(projected)
+    rel_l2 = np.linalg.norm(rotated_np - projected_np) / np.maximum(
+        np.linalg.norm(projected_np),
+        1e-30,
+    )
+
+    assert rel_l2 < 5e-4
+    assert np.max(np.abs(rotated_np - projected_np)) < 5e-3
+
+
 def test_axial_yukawa_m2m_matches_projection_oracle():
     kappa = 3.0
     order = 4
@@ -480,6 +544,58 @@ def test_axial_yukawa_m2m_matches_projection_oracle():
 
     assert rel_l2 < 2e-4
     np.testing.assert_allclose(axial_np, projected_np, rtol=5e-3, atol=5e-5)
+
+
+def test_rotated_yukawa_m2m_matches_projection_oracle():
+    kappa = 3.0
+    order = 4
+    parent_center = jnp.array([0.0, 0.0, 0.0])
+    child_center = jnp.array([0.2, -0.1, 0.05])
+    source = jnp.array(
+        [
+            [
+                [0.21, -0.09, 0.04],
+                [0.19, -0.12, 0.055],
+                [0.205, -0.08, 0.07],
+            ]
+        ]
+    )
+    charges = jnp.array([[2.0, -0.5, 1.2]])
+
+    child_moments = _compute_spherical_moments(
+        source,
+        charges,
+        child_center[None, :],
+        kappa,
+        order,
+    )[0]
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
+    projected = _spherical_m2m_coefficients_projected(
+        parent_center,
+        child_center,
+        child_moments,
+        quad_dirs,
+        quad_weights,
+        kappa,
+        order,
+    )
+    rotated = _spherical_m2m_coefficients_rotated(
+        parent_center,
+        child_center,
+        child_moments,
+        kappa,
+        order,
+    )
+
+    rotated_np = np.asarray(rotated)
+    projected_np = np.asarray(projected)
+    rel_l2 = np.linalg.norm(rotated_np - projected_np) / np.maximum(
+        np.linalg.norm(projected_np),
+        1e-30,
+    )
+
+    assert rel_l2 < 5e-4
+    assert np.max(np.abs(rotated_np - projected_np)) < 5e-3
 
 
 @pytest.mark.xfail(reason="Closed Yukawa M2M translation is not derived correctly yet.")
