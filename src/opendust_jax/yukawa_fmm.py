@@ -146,9 +146,10 @@ def _spherical_yukawa_potential_from_moments(
     value = 0.0 + 0.0j
     for idx, (ell, m) in enumerate(_lm_pairs(order)):
         value = value + moments[idx] * radial_k[ell] * _complex_spherical_harmonic(ell, m, rvec)
-    # modified_spherical_bessel_k contains the pi/2 convention. This factor
-    # makes the l=0 source-at-center case exactly exp(-k*r)/r.
-    return jnp.real((2.0 * kappa / jnp.pi) * value)
+    # modified_spherical_bessel_k contains the pi/2 convention:
+    # k_0(x) = pi/2 * exp(-x) / x. With normalized complex Y_00, the prefactor
+    # 8*kappa makes the l=0 source-at-center case exactly exp(-k*r)/r.
+    return jnp.real((8.0 * kappa) * value)
 
 
 def _spherical_yukawa_field_from_moments(

@@ -18,6 +18,10 @@ from opendust_jax.direct import (
 from opendust_jax.geometry import CylinderDomain, points_inside_cylinder, sample_uniform_cylinder
 from opendust_jax.validation import compute_force_metrics
 from opendust_jax.yukawa_basis import modified_spherical_bessel_i, modified_spherical_bessel_k
+from opendust_jax.yukawa_fmm import (
+    _compute_spherical_moments,
+    _spherical_yukawa_potential_from_moments,
+)
 
 
 def test_sample_uniform_cylinder_points_are_inside():
@@ -128,3 +132,34 @@ def test_yukawa_radial_basis_is_finite_near_zero():
 
     assert bool(jnp.all(jnp.isfinite(regular)))
     assert bool(jnp.all(jnp.isfinite(singular)))
+
+
+def test_yukawa_radial_i_small_x_leading_terms():
+    x = jnp.array([1e-5])
+    vals = modified_spherical_bessel_i(x, 4)[0]
+
+    np.testing.assert_allclose(float(vals[0]), 1.0, rtol=1e-6)
+    np.testing.assert_allclose(float(vals[1]), float(x[0] / 3.0), rtol=1e-5)
+    np.testing.assert_allclose(float(vals[2]), float(x[0] ** 2 / 15.0), rtol=1e-5)
+
+
+def test_spherical_yukawa_monopole_matches_direct_kernel():
+    charge = 2.5
+    kappa = 3.0
+    center = jnp.array([[0.0, 0.0, 0.0]])
+    source = jnp.array([[[0.0, 0.0, 0.0]]])
+    charges = jnp.array([[charge]])
+    target = jnp.array([0.7, 0.2, 0.4])
+
+    moments = _compute_spherical_moments(source, charges, center, kappa, 0)[0]
+    potential = _spherical_yukawa_potential_from_moments(
+        target,
+        center[0],
+        moments,
+        kappa,
+        0,
+    )
+    r = jnp.linalg.norm(target)
+    expected = charge * jnp.exp(-kappa * r) / r
+
+    np.testing.assert_allclose(float(potential), float(expected), rtol=1e-5)
