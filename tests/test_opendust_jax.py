@@ -20,6 +20,7 @@ from opendust_jax.validation import compute_force_metrics
 from opendust_jax.yukawa_basis import modified_spherical_bessel_i, modified_spherical_bessel_k
 from opendust_jax.yukawa_fmm import (
     _compute_spherical_moments,
+    _spherical_yukawa_field_from_moments,
     _spherical_yukawa_potential_from_moments,
 )
 
@@ -163,3 +164,25 @@ def test_spherical_yukawa_monopole_matches_direct_kernel():
     expected = charge * jnp.exp(-kappa * r) / r
 
     np.testing.assert_allclose(float(potential), float(expected), rtol=1e-5)
+
+
+def test_spherical_yukawa_monopole_field_matches_direct_kernel():
+    charge = 2.5
+    kappa = 3.0
+    center = jnp.array([[0.0, 0.0, 0.0]])
+    source = jnp.array([[[0.0, 0.0, 0.0]]])
+    charges = jnp.array([[charge]])
+    target = jnp.array([0.7, 0.2, 0.4])
+
+    moments = _compute_spherical_moments(source, charges, center, kappa, 0)[0]
+    field = _spherical_yukawa_field_from_moments(
+        target,
+        center[0],
+        moments,
+        kappa,
+        0,
+    )
+    r = jnp.linalg.norm(target)
+    expected = charge * jnp.exp(-kappa * r) * (1.0 / r**3 + kappa / r**2) * target
+
+    np.testing.assert_allclose(np.asarray(field), np.asarray(expected), rtol=2e-5)

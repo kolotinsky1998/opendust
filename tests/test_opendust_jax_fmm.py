@@ -51,3 +51,24 @@ def test_yukawa_fmm_forces_match_direct_reference_smoke():
     metrics = compute_force_metrics(direct, fmm)
 
     assert metrics.relative_l2 < 5.0e-2
+
+
+def test_yukawa_spherical_local_backend_smoke():
+    domain = CylinderDomain(R=5.0e-4, H=1.0e-3)
+    positions = sample_uniform_cylinder(domain, 256, seed=13)
+    charges = jnp.full((256,), 1.60217662e-19)
+    kappa = 1.0 / domain.R
+
+    tree = build_yukawa_tree(positions, n_max=64, theta=0.45, p=4)
+    direct = direct_yukawa_forces(positions, charges, kappa=kappa, batch_size=64)
+    fmm = yukawa_fmm_forces(
+        positions,
+        charges,
+        kappa=kappa,
+        tree=tree,
+        backend="spherical_local",
+        local_order=1,
+    )
+    metrics = compute_force_metrics(direct, fmm)
+
+    assert metrics.relative_l2 < 1.0e-1
