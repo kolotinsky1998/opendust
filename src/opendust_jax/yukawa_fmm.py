@@ -222,13 +222,10 @@ def _sphere_projection_quadrature(order: int) -> tuple[jax.Array, jax.Array]:
 
 
 @lru_cache(maxsize=None)
-def _legendre_quadrature(order: int) -> tuple[jax.Array, jax.Array]:
+def _legendre_quadrature(order: int) -> tuple[np.ndarray, np.ndarray]:
     n_mu = max(6 * int(order) + 24, 48)
     mu, weights = np.polynomial.legendre.leggauss(n_mu)
-    return (
-        jnp.asarray(mu, dtype=jnp.float32),
-        jnp.asarray(weights, dtype=jnp.float32),
-    )
+    return mu.astype(np.float32), weights.astype(np.float32)
 
 
 def _spherical_harmonic_norm(l: int, m_abs: int) -> float:
