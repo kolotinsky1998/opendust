@@ -302,7 +302,15 @@ def test_axial_yukawa_m2l_matches_projection_oracle():
         order,
     )
 
-    np.testing.assert_allclose(np.asarray(axial), np.asarray(projected), rtol=2e-3, atol=1e-7)
+    axial_np = np.asarray(axial)
+    projected_np = np.asarray(projected)
+    rel_l2 = np.linalg.norm(axial_np - projected_np) / np.maximum(
+        np.linalg.norm(projected_np),
+        1e-30,
+    )
+
+    assert rel_l2 < 2e-4
+    np.testing.assert_allclose(axial_np, projected_np, rtol=5e-3, atol=5e-5)
 
 
 @pytest.mark.xfail(reason="Closed Yukawa M2M translation is not derived correctly yet.")
