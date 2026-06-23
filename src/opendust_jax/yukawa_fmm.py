@@ -135,11 +135,39 @@ def _spherical_m2l_couplings(order: int) -> tuple[jax.Array, jax.Array, jax.Arra
     for local_idx, (n, nu) in enumerate(pairs):
         for source_idx, (ell, m) in enumerate(pairs):
             m_big = nu - m
+            big_l = n + ell
+            if abs(m_big) > big_l:
+                continue
+            # conj(Y_nu) = (-1)^nu Y_{n,-nu}; the Gaunt integral enforces
+            # -nu + m + M = 0, hence M = nu - m.
+            g = ((-1) ** nu) * _gaunt(n, -nu, ell, m, big_l, m_big)
+            if g != 0.0:
+                rows.append((local_idx, source_idx, big_l, m_big, 4.0 * np.pi * g))
+    if not rows:
+        empty_i = jnp.zeros((0,), dtype=jnp.int32)
+        empty_c = jnp.zeros((0,), dtype=jnp.float32)
+        return empty_i, empty_i, empty_i, empty_c
+    local_idx, source_idx, big_l, m_big, coeff = zip(*rows)
+    big_basis_idx = tuple(l * l + l + m for l, m in zip(big_l, m_big))
+    return (
+        jnp.asarray(local_idx, dtype=jnp.int32),
+        jnp.asarray(source_idx, dtype=jnp.int32),
+        jnp.asarray(big_basis_idx, dtype=jnp.int32),
+        jnp.asarray(coeff),
+    )
+
+
+def _spherical_regular_couplings(order: int) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Gaunt-coupled rows for regular-to-regular M2M/L2L translations."""
+
+    pairs = _lm_pairs(order)
+    rows = []
+    for local_idx, (n, nu) in enumerate(pairs):
+        for source_idx, (ell, m) in enumerate(pairs):
+            m_big = nu - m
             for big_l in range(abs(n - ell), n + ell + 1):
                 if abs(m_big) > big_l:
                     continue
-                # conj(Y_nu) = (-1)^nu Y_{n,-nu}; the Gaunt integral enforces
-                # -nu + m + M = 0, hence M = nu - m.
                 g = ((-1) ** nu) * _gaunt(n, -nu, ell, m, big_l, m_big)
                 if g != 0.0:
                     rows.append((local_idx, source_idx, big_l, m_big, 4.0 * np.pi * g))
@@ -486,7 +514,7 @@ def _spherical_m2l_coefficients_for_pair_closed(
     contributions = (
         (8.0 * kappa)
         * coupling_coeffs
-        * jnp.conj(translation_basis[big_basis_indices])
+        * translation_basis[big_basis_indices]
         * source_moments[source_indices]
     )
     local = jnp.zeros((n_coeff,), dtype=source_moments.dtype)
@@ -1281,7 +1309,9 @@ def _yukawa_fmm_field_spherical_m2l(
         return near / (4.0 * jnp.pi * eps0)
 
     order = int(p)
-    local_indices, source_indices, big_basis_indices, coupling_coeffs = _spherical_m2l_couplings(order)
+    m2l_local_indices, m2l_source_indices, m2l_big_basis_indices, m2l_coupling_coeffs = (
+        _spherical_m2l_couplings(order)
+    )
     src_lvl = tree["lvl_info"][-2][1]
     trg_lvl = tree["lvl_info"][-2][0]
     src_leaf_offset = tree["src_ofs"][src_lvl]
@@ -1315,10 +1345,10 @@ def _yukawa_fmm_field_spherical_m2l(
             tree["mpl_cnct"],
             trg_leaf_offset,
             target_centers.shape[0],
-            local_indices,
-            source_indices,
-            big_basis_indices,
-            coupling_coeffs,
+            m2l_local_indices,
+            m2l_source_indices,
+            m2l_big_basis_indices,
+            m2l_coupling_coeffs,
             kappa,
             order,
             cutoff_radius,
@@ -1372,7 +1402,12 @@ def _yukawa_fmm_field_spherical_multilevel(
         return near / (4.0 * jnp.pi * eps0)
 
     order = int(p)
-    local_indices, source_indices, big_basis_indices, coupling_coeffs = _spherical_m2l_couplings(order)
+    m2l_local_indices, m2l_source_indices, m2l_big_basis_indices, m2l_coupling_coeffs = (
+        _spherical_m2l_couplings(order)
+    )
+    reg_local_indices, reg_source_indices, reg_big_basis_indices, reg_coupling_coeffs = (
+        _spherical_regular_couplings(order)
+    )
     max_src_lvl = tree["lvl_info"][-2][1]
     max_trg_lvl = tree["lvl_info"][-2][0]
     src_leaf_offset = tree["src_ofs"][max_src_lvl]
@@ -1393,10 +1428,10 @@ def _yukawa_fmm_field_spherical_multilevel(
         tree["boxcenters"],
         tree["src_ofs"],
         max_src_lvl,
-        local_indices,
-        source_indices,
-        big_basis_indices,
-        coupling_coeffs,
+        reg_local_indices,
+        reg_source_indices,
+        reg_big_basis_indices,
+        reg_coupling_coeffs,
         kappa,
         order,
     )
@@ -1412,10 +1447,10 @@ def _yukawa_fmm_field_spherical_multilevel(
             moments,
             tree["mpl_cnct"],
             tree["trg_ofs"][max_trg_lvl + 1],
-            local_indices,
-            source_indices,
-            big_basis_indices,
-            coupling_coeffs,
+            m2l_local_indices,
+            m2l_source_indices,
+            m2l_big_basis_indices,
+            m2l_coupling_coeffs,
             kappa,
             order,
             cutoff_radius,
@@ -1426,10 +1461,10 @@ def _yukawa_fmm_field_spherical_multilevel(
         tree["eval_boxcenters"],
         tree["trg_ofs"],
         max_trg_lvl,
-        local_indices,
-        source_indices,
-        big_basis_indices,
-        coupling_coeffs,
+        reg_local_indices,
+        reg_source_indices,
+        reg_big_basis_indices,
+        reg_coupling_coeffs,
         kappa,
         order,
     )
