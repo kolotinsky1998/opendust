@@ -782,11 +782,15 @@ def _spherical_l2l_coefficients_rotated(
 ) -> jax.Array:
     rvec = child_center - parent_center
     distance = jnp.linalg.norm(rvec)
-    rotation = _complex_rotation_matrix_z_to_vector(rvec, order)
-    axial_matrix = _spherical_l2l_axial_matrix(distance, kappa, order)
-    aligned_parent = rotation.conj().T @ parent_coeffs
-    aligned_child = axial_matrix @ aligned_parent
-    return rotation @ aligned_child
+
+    def translate() -> jax.Array:
+        rotation = _complex_rotation_matrix_z_to_vector(rvec, order)
+        axial_matrix = _spherical_l2l_axial_matrix(distance, kappa, order)
+        aligned_parent = rotation.conj().T @ parent_coeffs
+        aligned_child = axial_matrix @ aligned_parent
+        return rotation @ aligned_child
+
+    return jax.lax.cond(distance < 1.0e-14, lambda: parent_coeffs, translate)
 
 
 @partial(jax.jit, static_argnames=("order",))
@@ -845,11 +849,15 @@ def _spherical_m2m_coefficients_rotated(
 ) -> jax.Array:
     rvec = child_center - parent_center
     distance = jnp.linalg.norm(rvec)
-    rotation = _complex_rotation_matrix_z_to_vector(rvec, order)
-    axial_matrix = _spherical_m2m_axial_matrix(distance, kappa, order)
-    aligned_child = rotation.conj().T @ child_moments
-    aligned_parent = axial_matrix @ aligned_child
-    return rotation @ aligned_parent
+
+    def translate() -> jax.Array:
+        rotation = _complex_rotation_matrix_z_to_vector(rvec, order)
+        axial_matrix = _spherical_m2m_axial_matrix(distance, kappa, order)
+        aligned_child = rotation.conj().T @ child_moments
+        aligned_parent = axial_matrix @ aligned_child
+        return rotation @ aligned_parent
+
+    return jax.lax.cond(distance < 1.0e-14, lambda: child_moments, translate)
 
 
 @partial(jax.jit, static_argnames=("order",))
@@ -1052,6 +1060,43 @@ def _yukawa_spherical_go_up_multipoles(
     return moments
 
 
+@partial(jax.jit, static_argnames=("order", "src_ofs", "max_src_lvl", "n_children"))
+def _yukawa_spherical_go_up_multipoles_analytic(
+    leaf_moments: jax.Array,
+    boxcenters: jax.Array,
+    src_ofs: tuple[int, ...],
+    max_src_lvl: int,
+    kappa: float,
+    order: int,
+    n_children: int = 8,
+) -> jax.Array:
+    n_coeff = (order + 1) ** 2
+    moments = jnp.zeros((src_ofs[max_src_lvl + 1], n_coeff), dtype=leaf_moments.dtype)
+    moments = moments.at[src_ofs[max_src_lvl] : src_ofs[max_src_lvl + 1]].set(leaf_moments)
+    for level in range(max_src_lvl, 0, -1):
+        child_start, child_end = src_ofs[level], src_ofs[level + 1]
+        parent_start, parent_end = src_ofs[level - 1], src_ofs[level]
+        child_coeffs = moments[child_start:child_end]
+        child_centers = boxcenters[child_start:child_end]
+        parent_centers = boxcenters[parent_start:parent_end]
+        parent_local = jnp.arange(child_coeffs.shape[0]) // n_children
+
+        translated = jax.vmap(
+            lambda coeffs, old_center, new_center: _spherical_m2m_coefficients_rotated(
+                new_center,
+                old_center,
+                coeffs,
+                kappa,
+                order,
+            )
+        )(child_coeffs, child_centers, parent_centers[parent_local])
+
+        parent_coeffs = jnp.zeros((parent_end - parent_start, n_coeff), dtype=leaf_moments.dtype)
+        parent_coeffs = parent_coeffs.at[parent_local].add(translated)
+        moments = moments.at[parent_start:parent_end].set(parent_coeffs)
+    return moments
+
+
 @partial(jax.jit, static_argnames=("order", "n_targets"))
 def _eval_spherical_m2l_coefficients_closed(
     centers_global: jax.Array,
@@ -1205,13 +1250,20 @@ def _eval_spherical_m2l_coefficients_rotated_batched(
     pairs_batched = pairs_padded.reshape((-1, batch_size, 2))
     valid_batched = valid_padded.reshape((-1, batch_size))
 
-    def pair_coeff(pair: jax.Array) -> jax.Array:
-        return _spherical_m2l_coefficients_for_pair_rotated(
-            centers_global[pair[0]],
-            centers_global[pair[1]],
-            moments_global[pair[1]],
-            kappa,
-            order,
+    def pair_coeff(pair: jax.Array, valid: jax.Array) -> jax.Array:
+        def compute() -> jax.Array:
+            return _spherical_m2l_coefficients_for_pair_rotated(
+                centers_global[pair[0]],
+                centers_global[pair[1]],
+                moments_global[pair[1]],
+                kappa,
+                order,
+            )
+
+        return jax.lax.cond(
+            valid,
+            compute,
+            lambda: jnp.zeros((n_coeff,), dtype=moments_global.dtype),
         )
 
     def scan_body(
@@ -1225,7 +1277,7 @@ def _eval_spherical_m2l_coefficients_rotated_batched(
             centers_global[pairs[:, 0]] - centers_global[src_global],
             axis=1,
         )
-        coeffs = jax.vmap(pair_coeff)(pairs)
+        coeffs = jax.vmap(pair_coeff)(pairs, valid)
         keep = valid & ~((cutoff_radius > 0.0) & (box_distance > cutoff_radius))
         coeffs = jnp.where(keep[:, None], coeffs, jnp.zeros_like(coeffs))
         buf = buf.at[trg_local].add(coeffs)
@@ -1384,13 +1436,20 @@ def _eval_spherical_m2l_all_levels_rotated_batched(
     pairs_batched = pairs_padded.reshape((-1, batch_size, 2))
     valid_batched = valid_padded.reshape((-1, batch_size))
 
-    def pair_coeff(pair: jax.Array) -> jax.Array:
-        return _spherical_m2l_coefficients_for_pair_rotated(
-            centers_global[pair[0]],
-            centers_global[pair[1]],
-            moments_global[pair[1]],
-            kappa,
-            order,
+    def pair_coeff(pair: jax.Array, valid: jax.Array) -> jax.Array:
+        def compute() -> jax.Array:
+            return _spherical_m2l_coefficients_for_pair_rotated(
+                centers_global[pair[0]],
+                centers_global[pair[1]],
+                moments_global[pair[1]],
+                kappa,
+                order,
+            )
+
+        return jax.lax.cond(
+            valid,
+            compute,
+            lambda: jnp.zeros((n_coeff,), dtype=moments_global.dtype),
         )
 
     def scan_body(
@@ -1404,7 +1463,7 @@ def _eval_spherical_m2l_all_levels_rotated_batched(
             centers_global[trg_global] - centers_global[src_global],
             axis=1,
         )
-        coeffs = jax.vmap(pair_coeff)(pairs)
+        coeffs = jax.vmap(pair_coeff)(pairs, valid)
         keep = valid & ~((cutoff_radius > 0.0) & (box_distance > cutoff_radius))
         coeffs = jnp.where(keep[:, None], coeffs, jnp.zeros_like(coeffs))
         buf = buf.at[trg_global].add(coeffs)
@@ -1442,6 +1501,38 @@ def _yukawa_spherical_go_down_locals(
                 coeffs,
                 quad_dirs,
                 quad_weights,
+                kappa,
+                order,
+            )
+        )(parent_coeffs[parent_local], parent_centers[parent_local], child_centers)
+        locals_out = locals_out.at[child_start:child_end].add(translated)
+    return locals_out
+
+
+@partial(jax.jit, static_argnames=("order", "trg_ofs", "max_trg_lvl", "n_children"))
+def _yukawa_spherical_go_down_locals_analytic(
+    locals_in: jax.Array,
+    eval_boxcenters: jax.Array,
+    trg_ofs: tuple[int, ...],
+    max_trg_lvl: int,
+    kappa: float,
+    order: int,
+    n_children: int = 8,
+) -> jax.Array:
+    locals_out = locals_in
+    for level in range(0, max_trg_lvl):
+        parent_start, parent_end = trg_ofs[level], trg_ofs[level + 1]
+        child_start, child_end = trg_ofs[level + 1], trg_ofs[level + 2]
+        parent_coeffs = locals_out[parent_start:parent_end]
+        parent_centers = eval_boxcenters[parent_start:parent_end]
+        child_centers = eval_boxcenters[child_start:child_end]
+        parent_local = jnp.arange(child_end - child_start) // n_children
+
+        translated = jax.vmap(
+            lambda coeffs, old_center, new_center: _spherical_l2l_coefficients_rotated(
+                new_center,
+                old_center,
+                coeffs,
                 kappa,
                 order,
             )
@@ -2224,6 +2315,105 @@ def _yukawa_fmm_field_spherical_multilevel(
     return (far + near) / (4.0 * jnp.pi * eps0)
 
 
+def _yukawa_fmm_field_spherical_multilevel_full_analytic(
+    positions: jax.Array,
+    charges: jax.Array,
+    kappa: float,
+    p: int,
+    theta: float,
+    n_max: int,
+    tree: dict[str, Any],
+    eps0: float,
+    cutoff_radius: float,
+) -> jax.Array:
+    padded = handle_padding(tree["pts"], charges, tree["eval_pts"], tree["idcs"])
+    padded_pts, padded_chrgs, padded_eval_pts = padded[:3]
+    dir_padded_pts, dir_padded_chrgs, dir_padded_eval_pts = padded[3:]
+
+    if len(tree["lvl_info"]) == 1:
+        near_leaf = _eval_near_field(
+            dir_padded_pts,
+            dir_padded_chrgs,
+            dir_padded_eval_pts,
+            tree["dir_cnct"],
+            kappa,
+        )
+        near = near_leaf.reshape((-1, 3))[tree["idcs"][3][1]]
+        return near / (4.0 * jnp.pi * eps0)
+
+    order = int(p)
+    max_src_lvl = tree["lvl_info"][-2][1]
+    max_trg_lvl = tree["lvl_info"][-2][0]
+    src_leaf_offset = tree["src_ofs"][max_src_lvl]
+    src_next_offset = tree["src_ofs"][max_src_lvl + 1]
+    trg_leaf_offset = tree["trg_ofs"][max_trg_lvl]
+    trg_next_offset = tree["trg_ofs"][max_trg_lvl + 1]
+
+    leaf_source_centers = tree["boxcenters"][src_leaf_offset:src_next_offset]
+    leaf_moments = _compute_spherical_moments(
+        padded_pts,
+        padded_chrgs,
+        leaf_source_centers,
+        kappa,
+        order,
+    )
+    moments = _yukawa_spherical_go_up_multipoles_analytic(
+        leaf_moments,
+        tree["boxcenters"],
+        tree["src_ofs"],
+        max_src_lvl,
+        kappa,
+        order,
+    )
+
+    if tree["mpl_cnct"].size == 0:
+        local_coeffs_all = jnp.zeros(
+            (tree["trg_ofs"][max_trg_lvl + 1], (order + 1) ** 2),
+            dtype=moments.dtype,
+        )
+    else:
+        local_coeffs_all = _eval_spherical_m2l_all_levels_rotated_batched(
+            tree["boxcenters"],
+            moments,
+            tree["mpl_cnct"],
+            tree["trg_ofs"][max_trg_lvl + 1],
+            kappa,
+            order,
+            cutoff_radius,
+            1024,
+        )
+
+    local_coeffs_all = _yukawa_spherical_go_down_locals_analytic(
+        local_coeffs_all,
+        tree["eval_boxcenters"],
+        tree["trg_ofs"],
+        max_trg_lvl,
+        kappa,
+        order,
+    )
+
+    far_leaf = _eval_spherical_local_expansion_field(
+        padded_eval_pts,
+        tree["eval_boxcenters"][trg_leaf_offset:trg_next_offset],
+        local_coeffs_all[trg_leaf_offset:trg_next_offset],
+        kappa,
+        order,
+    )
+    if tree["dir_cnct"].size == 0:
+        near_leaf = jnp.zeros_like(dir_padded_eval_pts)
+    else:
+        near_leaf = _eval_near_field(
+            dir_padded_pts,
+            dir_padded_chrgs,
+            dir_padded_eval_pts,
+            tree["dir_cnct"],
+            kappa,
+        )
+    far = far_leaf.reshape((-1, 3))[tree["idcs"][1][1]]
+    near = near_leaf.reshape((-1, 3))[tree["idcs"][3][1]]
+    return (far + near) / (4.0 * jnp.pi * eps0)
+
+
 def _yukawa_fmm_field_spherical_local(
     positions: jax.Array,
     charges: jax.Array,
@@ -2419,6 +2609,18 @@ def yukawa_fmm_field(
             cutoff,
             True,
         )
+    if backend == "spherical_multilevel_full_analytic":
+        return _yukawa_fmm_field_spherical_multilevel_full_analytic(
+            positions,
+            charges,
+            kappa,
+            p,
+            theta,
+            n_max,
+            tree,
+            eps0,
+            cutoff,
+        )
     if backend == "spherical_local":
         return _yukawa_fmm_field_spherical_local(
             positions,
@@ -2445,8 +2647,9 @@ def yukawa_fmm_field(
         )
     raise ValueError(
         "backend must be 'spherical', 'spherical_m2l', 'spherical_m2l_analytic', "
-        "'spherical_multilevel', 'spherical_multilevel_analytic', 'spherical_local', "
-        "'taylor', or 'chebyshev'."
+        "'spherical_multilevel', 'spherical_multilevel_analytic', "
+        "'spherical_multilevel_full_analytic', 'spherical_local', 'taylor', "
+        "or 'chebyshev'."
     )
 
 
