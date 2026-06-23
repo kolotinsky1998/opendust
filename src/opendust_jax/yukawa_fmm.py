@@ -448,6 +448,17 @@ def _yukawa_fmm_field_chebyshev(
     padded_pts, padded_chrgs, padded_eval_pts = padded[:3]
     dir_padded_pts, dir_padded_chrgs, dir_padded_eval_pts = padded[3:]
 
+    if len(tree["lvl_info"]) == 1:
+        near_leaf = _eval_near_field(
+            dir_padded_pts,
+            dir_padded_chrgs,
+            dir_padded_eval_pts,
+            tree["dir_cnct"],
+            kappa,
+        )
+        near = near_leaf.reshape((-1, 3))[tree["idcs"][3][1]]
+        return near / (4.0 * jnp.pi * eps0)
+
     order = int(tree.get("p", p))
     nodes_1d = _chebyshev_nodes(order)
     local_nodes = _tensor_nodes(order)
@@ -515,6 +526,17 @@ def _yukawa_fmm_field_taylor(
     padded = handle_padding(tree["pts"], charges, tree["eval_pts"], tree["idcs"])
     padded_pts, padded_chrgs, padded_eval_pts = padded[:3]
     dir_padded_pts, dir_padded_chrgs, dir_padded_eval_pts = padded[3:]
+
+    if len(tree["lvl_info"]) == 1:
+        near_leaf = _eval_near_field(
+            dir_padded_pts,
+            dir_padded_chrgs,
+            dir_padded_eval_pts,
+            tree["dir_cnct"],
+            kappa,
+        )
+        near = near_leaf.reshape((-1, 3))[tree["idcs"][3][1]]
+        return near / (4.0 * jnp.pi * eps0)
 
     order = min(int(p), 3)
     src_lvl = tree["lvl_info"][-2][1]
@@ -585,6 +607,17 @@ def _yukawa_fmm_field_spherical(
     padded = handle_padding(tree["pts"], charges, tree["eval_pts"], tree["idcs"])
     padded_pts, padded_chrgs, padded_eval_pts = padded[:3]
     dir_padded_pts, dir_padded_chrgs, dir_padded_eval_pts = padded[3:]
+
+    if len(tree["lvl_info"]) == 1:
+        near_leaf = _eval_near_field(
+            dir_padded_pts,
+            dir_padded_chrgs,
+            dir_padded_eval_pts,
+            tree["dir_cnct"],
+            kappa,
+        )
+        near = near_leaf.reshape((-1, 3))[tree["idcs"][3][1]]
+        return near / (4.0 * jnp.pi * eps0)
 
     order = int(p)
     src_lvl = tree["lvl_info"][-2][1]
