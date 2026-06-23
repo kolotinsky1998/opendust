@@ -661,6 +661,98 @@ def _spherical_m2l_coefficients_for_pair_axial(
 
 
 @partial(jax.jit, static_argnames=("order",))
+def _spherical_l2l_axial_matrix(
+    distance: float,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    mu, weights = _legendre_quadrature(order)
+    radius = jnp.maximum(0.5 * distance, 1.0e-12)
+    sep = jnp.sqrt(jnp.maximum(distance * distance + radius * radius + 2.0 * distance * radius * mu, 1.0e-30))
+    cos_gamma = jnp.clip((distance + radius * mu) / sep, -1.0, 1.0)
+    radial_i_radius = modified_spherical_bessel_i(kappa * radius, order)
+    radial_i_sep = modified_spherical_bessel_i(kappa * sep, order)
+    pairs = _lm_pairs(order)
+    n_coeff = (order + 1) ** 2
+    matrix = jnp.zeros((n_coeff, n_coeff), dtype=jnp.complex64)
+
+    for target_idx, (n, nu) in enumerate(pairs):
+        m_abs = abs(nu)
+        p_n = _associated_legendre(n, m_abs, mu)
+        norm_n = _spherical_harmonic_norm(n, m_abs)
+        denom = jnp.maximum(radial_i_radius[n], 1.0e-30)
+        for source_idx, (ell, m) in enumerate(pairs):
+            if m != nu:
+                continue
+            p_l = _associated_legendre(ell, m_abs, cos_gamma)
+            norm_l = _spherical_harmonic_norm(ell, m_abs)
+            integral = jnp.sum(weights * radial_i_sep[..., ell] * p_l * p_n)
+            value = (2.0 * jnp.pi) * norm_n * norm_l * integral / denom
+            matrix = matrix.at[target_idx, source_idx].set(value + 0.0j)
+    return matrix
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_l2l_coefficients_axial(
+    child_center: jax.Array,
+    parent_center: jax.Array,
+    parent_coeffs: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    rvec = child_center - parent_center
+    distance = jnp.linalg.norm(rvec)
+    matrix = _spherical_l2l_axial_matrix(distance, kappa, order)
+    return matrix @ parent_coeffs
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_m2m_axial_matrix(
+    distance: float,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    mu, weights = _legendre_quadrature(order)
+    radius = jnp.maximum(2.0 * distance, 1.0e-12)
+    sep = jnp.sqrt(jnp.maximum(radius * radius + distance * distance - 2.0 * radius * distance * mu, 1.0e-30))
+    cos_gamma = jnp.clip((radius * mu - distance) / sep, -1.0, 1.0)
+    radial_k_radius = modified_spherical_bessel_k(kappa * radius, order)
+    radial_k_sep = modified_spherical_bessel_k(kappa * sep, order)
+    pairs = _lm_pairs(order)
+    n_coeff = (order + 1) ** 2
+    matrix = jnp.zeros((n_coeff, n_coeff), dtype=jnp.complex64)
+
+    for target_idx, (n, nu) in enumerate(pairs):
+        m_abs = abs(nu)
+        p_n = _associated_legendre(n, m_abs, mu)
+        norm_n = _spherical_harmonic_norm(n, m_abs)
+        denom = jnp.maximum(radial_k_radius[n], 1.0e-30)
+        for source_idx, (ell, m) in enumerate(pairs):
+            if m != nu:
+                continue
+            p_l = _associated_legendre(ell, m_abs, cos_gamma)
+            norm_l = _spherical_harmonic_norm(ell, m_abs)
+            integral = jnp.sum(weights * radial_k_sep[..., ell] * p_l * p_n)
+            value = (2.0 * jnp.pi) * norm_n * norm_l * integral / denom
+            matrix = matrix.at[target_idx, source_idx].set(value + 0.0j)
+    return matrix
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_m2m_coefficients_axial(
+    parent_center: jax.Array,
+    child_center: jax.Array,
+    child_moments: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    rvec = child_center - parent_center
+    distance = jnp.linalg.norm(rvec)
+    matrix = _spherical_m2m_axial_matrix(distance, kappa, order)
+    return matrix @ child_moments
+
+
+@partial(jax.jit, static_argnames=("order",))
 def _spherical_regular_translate_coeffs(
     coeffs: jax.Array,
     old_center: jax.Array,
