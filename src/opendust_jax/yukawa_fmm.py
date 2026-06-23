@@ -604,7 +604,8 @@ def _yukawa_fmm_field_spherical(
 
     n_global_src = tree["boxcenters"].shape[0]
     n_coeff = (order + 1) ** 2
-    moments_global = jnp.zeros((n_global_src, n_coeff), dtype=jnp.complex64)
+    moments_dtype = jnp.result_type(moments, 1j)
+    moments_global = jnp.zeros((n_global_src, n_coeff), dtype=moments_dtype)
     moments_global = moments_global.at[src_leaf_offset:src_next_offset].set(moments)
 
     if tree["mpl_cnct"].size == 0:
