@@ -486,7 +486,7 @@ def _spherical_m2l_coefficients_for_pair_closed(
     contributions = (
         (8.0 * kappa)
         * coupling_coeffs
-        * translation_basis[big_basis_indices]
+        * jnp.conj(translation_basis[big_basis_indices])
         * source_moments[source_indices]
     )
     local = jnp.zeros((n_coeff,), dtype=source_moments.dtype)
