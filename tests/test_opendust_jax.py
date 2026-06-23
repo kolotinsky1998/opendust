@@ -318,12 +318,34 @@ def test_closed_yukawa_l2l_matches_projection_oracle():
     order = 4
     parent_center = jnp.array([0.0, 0.0, 0.0])
     child_center = jnp.array([0.12, -0.08, 0.04])
-    parent_coeffs = jnp.array(
+    source_center = jnp.array([-1.0, 0.4, 0.2])
+    source = jnp.array(
         [
-            complex(np.sin(0.37 * i), np.cos(0.21 * i)) / (1.0 + i)
-            for i in range((order + 1) ** 2)
-        ],
-        dtype=jnp.complex64,
+            [
+                [-1.01, 0.39, 0.21],
+                [-0.98, 0.42, 0.18],
+                [-1.03, 0.38, 0.19],
+            ]
+        ]
+    )
+    charges = jnp.array([[2.0, -0.5, 1.2]])
+
+    source_moments = _compute_spherical_moments(
+        source,
+        charges,
+        source_center[None, :],
+        kappa,
+        order,
+    )[0]
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
+    parent_coeffs = _spherical_m2l_coefficients_for_pair_projected(
+        parent_center,
+        source_center,
+        source_moments,
+        quad_dirs,
+        quad_weights,
+        kappa,
+        order,
     )
 
     reg_local_indices, reg_source_indices, reg_big_basis_indices, reg_coupling_coeffs = (
@@ -341,7 +363,6 @@ def test_closed_yukawa_l2l_matches_projection_oracle():
         order,
     )
 
-    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
     projected = _spherical_l2l_coefficients_projected(
         child_center,
         parent_center,
