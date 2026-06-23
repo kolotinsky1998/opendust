@@ -20,6 +20,9 @@ from opendust_jax.validation import compute_force_metrics
 from opendust_jax.yukawa_basis import modified_spherical_bessel_i, modified_spherical_bessel_k
 from opendust_jax.yukawa_fmm import (
     _compute_spherical_moments,
+    _sphere_projection_quadrature,
+    _spherical_m2l_coefficients_for_pair_projected,
+    _spherical_yukawa_local_field_from_coeffs,
     _spherical_yukawa_field_from_moments,
     _spherical_yukawa_potential_from_moments,
 )
@@ -186,3 +189,66 @@ def test_spherical_yukawa_monopole_field_matches_direct_kernel():
     expected = charge * jnp.exp(-kappa * r) * (1.0 / r**3 + kappa / r**2) * target
 
     np.testing.assert_allclose(np.asarray(field), np.asarray(expected), rtol=2e-5)
+
+
+def test_projected_yukawa_m2l_reproduces_monopole_m2p_field():
+    charge = 2.5
+    kappa = 3.0
+    order = 4
+    source_center = jnp.array([0.0, 0.0, 0.0])
+    target_center = jnp.array([1.0, 0.3, -0.2])
+    source = jnp.array([[[0.0, 0.0, 0.0]]])
+    charges = jnp.array([[charge]])
+
+    moments = _compute_spherical_moments(
+        source,
+        charges,
+        source_center[None, :],
+        kappa,
+        order,
+    )[0]
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
+    local_coeffs = _spherical_m2l_coefficients_for_pair_projected(
+        target_center,
+        source_center,
+        moments,
+        quad_dirs,
+        quad_weights,
+        kappa,
+        order,
+    )
+
+    offsets = jnp.array(
+        [
+            [0.01, 0.00, 0.00],
+            [0.00, -0.02, 0.01],
+            [-0.01, 0.01, -0.015],
+        ]
+    )
+    points = target_center + offsets
+    m2p_field = jnp.stack(
+        [
+            _spherical_yukawa_field_from_moments(
+                point,
+                source_center,
+                moments,
+                kappa,
+                order,
+            )
+            for point in points
+        ]
+    )
+    local_field = jnp.stack(
+        [
+            _spherical_yukawa_local_field_from_coeffs(
+                point,
+                target_center,
+                local_coeffs,
+                kappa,
+                order,
+            )
+            for point in points
+        ]
+    )
+
+    np.testing.assert_allclose(np.asarray(local_field), np.asarray(m2p_field), rtol=1e-3, atol=1e-6)

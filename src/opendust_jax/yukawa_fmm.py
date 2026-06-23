@@ -16,7 +16,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-from functools import partial
+from functools import lru_cache, partial
 from math import factorial
 
 from opendust_jax.direct import _validate_inputs
@@ -184,6 +184,40 @@ def _spherical_regular_couplings(order: int) -> tuple[jax.Array, jax.Array, jax.
         jnp.asarray(source_idx, dtype=jnp.int32),
         jnp.asarray(big_basis_idx, dtype=jnp.int32),
         jnp.asarray(coeff),
+    )
+
+
+@lru_cache(maxsize=None)
+def _sphere_projection_quadrature(order: int) -> tuple[jax.Array, jax.Array]:
+    """Tensor-product Gauss/Fourier quadrature for spherical-harmonic projection.
+
+    The nodes integrate smooth functions on the unit sphere. We deliberately use
+    a projection-based M2L operator for the production spherical Yukawa path:
+    local coefficients are defined by orthogonal projection of the translated
+    source multipole field, avoiding fragile Wigner/Gaunt phase conventions.
+    """
+
+    n_theta = max(3 * int(order) + 8, 20)
+    n_phi = 2 * n_theta
+    mu, w_mu = np.polynomial.legendre.leggauss(n_theta)
+    phi = np.linspace(0.0, 2.0 * np.pi, n_phi, endpoint=False)
+    sin_theta = np.sqrt(np.maximum(0.0, 1.0 - mu * mu))
+    dirs = []
+    weights = []
+    w_phi = 2.0 * np.pi / n_phi
+    for i in range(n_theta):
+        for angle in phi:
+            dirs.append(
+                (
+                    sin_theta[i] * np.cos(angle),
+                    sin_theta[i] * np.sin(angle),
+                    mu[i],
+                )
+            )
+            weights.append(w_mu[i] * w_phi)
+    return (
+        jnp.asarray(dirs, dtype=jnp.float32),
+        jnp.asarray(weights, dtype=jnp.float32),
     )
 
 
@@ -525,6 +559,41 @@ def _spherical_m2l_coefficients_for_pair_closed(
 
 
 @partial(jax.jit, static_argnames=("order",))
+def _spherical_m2l_coefficients_for_pair_projected(
+    target_center: jax.Array,
+    source_center: jax.Array,
+    source_moments: jax.Array,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    distance = jnp.linalg.norm(target_center - source_center)
+    # The projection shell must lie inside the local convergence ball. A
+    # conservative fraction of center distance keeps it away from the singular
+    # source expansion while avoiding tiny i_l(k r) denominators.
+    radius = jnp.maximum(0.35 * distance, 1.0e-12)
+    probe_points = target_center[None, :] + radius * quad_dirs
+    potentials = jax.vmap(
+        lambda point: _spherical_yukawa_potential_from_moments(
+            point,
+            source_center,
+            source_moments,
+            kappa,
+            order,
+        )
+    )(probe_points)
+
+    radial_i = modified_spherical_bessel_i(kappa * radius, order)
+    coeffs = []
+    for ell, m in _lm_pairs(order):
+        ylm = _complex_spherical_harmonic(ell, m, quad_dirs)
+        numerator = jnp.sum(quad_weights * potentials * jnp.conj(ylm))
+        coeffs.append(numerator / jnp.maximum(radial_i[ell], 1.0e-30))
+    return jnp.stack(coeffs)
+
+
+@partial(jax.jit, static_argnames=("order",))
 def _spherical_regular_translate_coeffs(
     coeffs: jax.Array,
     old_center: jax.Array,
@@ -549,16 +618,98 @@ def _spherical_regular_translate_coeffs(
     return translated
 
 
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_m2m_coefficients_projected(
+    parent_center: jax.Array,
+    child_center: jax.Array,
+    child_moments: jax.Array,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    distance = jnp.linalg.norm(child_center - parent_center)
+    same_center = distance < 1.0e-14
+    radius = jnp.maximum(2.0 * distance, 1.0e-12)
+    probe_points = parent_center[None, :] + radius * quad_dirs
+    potentials = jax.vmap(
+        lambda point: _spherical_yukawa_potential_from_moments(
+            point,
+            child_center,
+            child_moments,
+            kappa,
+            order,
+        )
+    )(probe_points)
+
+    radial_k = modified_spherical_bessel_k(kappa * radius, order)
+    coeffs = []
+    for ell, m in _lm_pairs(order):
+        ylm = _complex_spherical_harmonic(ell, m, quad_dirs)
+        numerator = jnp.sum(quad_weights * potentials * jnp.conj(ylm))
+        coeffs.append(numerator / jnp.maximum(8.0 * kappa * radial_k[ell], 1.0e-30))
+    projected = jnp.stack(coeffs)
+    return jnp.where(same_center, child_moments, projected)
+
+
+def _spherical_yukawa_local_potential_from_coeffs(
+    point: jax.Array,
+    center: jax.Array,
+    coeffs: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    rvec = point - center
+    r = jnp.linalg.norm(rvec)
+    radial_i = modified_spherical_bessel_i(kappa * r, order)
+    value = 0.0 + 0.0j
+    for idx, (ell, m) in enumerate(_lm_pairs(order)):
+        value = value + coeffs[idx] * radial_i[ell] * _complex_spherical_harmonic(ell, m, rvec)
+    return jnp.real(value)
+
+
+@partial(jax.jit, static_argnames=("order",))
+def _spherical_l2l_coefficients_projected(
+    child_center: jax.Array,
+    parent_center: jax.Array,
+    parent_coeffs: jax.Array,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
+    kappa: float,
+    order: int,
+) -> jax.Array:
+    distance = jnp.linalg.norm(child_center - parent_center)
+    same_center = distance < 1.0e-14
+    radius = jnp.maximum(0.5 * distance, 1.0e-12)
+    probe_points = child_center[None, :] + radius * quad_dirs
+    potentials = jax.vmap(
+        lambda point: _spherical_yukawa_local_potential_from_coeffs(
+            point,
+            parent_center,
+            parent_coeffs,
+            kappa,
+            order,
+        )
+    )(probe_points)
+
+    radial_i = modified_spherical_bessel_i(kappa * radius, order)
+    coeffs = []
+    for ell, m in _lm_pairs(order):
+        ylm = _complex_spherical_harmonic(ell, m, quad_dirs)
+        numerator = jnp.sum(quad_weights * potentials * jnp.conj(ylm))
+        coeffs.append(numerator / jnp.maximum(radial_i[ell], 1.0e-30))
+    projected = jnp.stack(coeffs)
+    return jnp.where(same_center, parent_coeffs, projected)
+
+
 @partial(jax.jit, static_argnames=("order", "src_ofs", "max_src_lvl", "n_children"))
 def _yukawa_spherical_go_up_multipoles(
     leaf_moments: jax.Array,
     boxcenters: jax.Array,
     src_ofs: tuple[int, ...],
     max_src_lvl: int,
-    local_indices: jax.Array,
-    source_indices: jax.Array,
-    big_basis_indices: jax.Array,
-    coupling_coeffs: jax.Array,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
     kappa: float,
     order: int,
     n_children: int = 8,
@@ -575,14 +726,12 @@ def _yukawa_spherical_go_up_multipoles(
         parent_local = jnp.arange(child_coeffs.shape[0]) // n_children
 
         translated = jax.vmap(
-            lambda coeffs, old_center, new_center: _spherical_regular_translate_coeffs(
-                coeffs,
-                old_center,
+            lambda coeffs, old_center, new_center: _spherical_m2m_coefficients_projected(
                 new_center,
-                local_indices,
-                source_indices,
-                big_basis_indices,
-                coupling_coeffs,
+                old_center,
+                coeffs,
+                quad_dirs,
+                quad_weights,
                 kappa,
                 order,
             )
@@ -626,6 +775,50 @@ def _eval_spherical_m2l_coefficients_closed(
                 source_indices,
                 big_basis_indices,
                 coupling_coeffs,
+                kappa,
+                order,
+            )
+
+        coeffs = jax.lax.cond(
+            (cutoff_radius > 0.0) & (box_distance > cutoff_radius),
+            lambda: jnp.zeros((n_coeff,), dtype=moments_global.dtype),
+            compute_coeffs,
+        )
+        buf = buf.at[trg_local].add(coeffs)
+        return buf, None
+
+    local, _ = jax.lax.scan(scan_body, local, mpl_cnct)
+    return local
+
+
+@partial(jax.jit, static_argnames=("order", "n_targets"))
+def _eval_spherical_m2l_coefficients_projected(
+    centers_global: jax.Array,
+    moments_global: jax.Array,
+    mpl_cnct: jax.Array,
+    trg_leaf_offset: int,
+    n_targets: int,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
+    kappa: float,
+    order: int,
+    cutoff_radius: float,
+) -> jax.Array:
+    n_coeff = (order + 1) ** 2
+    local = jnp.zeros((n_targets, n_coeff), dtype=moments_global.dtype)
+
+    def scan_body(buf: jax.Array, pair: jax.Array) -> tuple[jax.Array, None]:
+        trg_local = pair[0] - trg_leaf_offset
+        src_global = pair[1]
+        box_distance = jnp.linalg.norm(centers_global[pair[0]] - centers_global[src_global])
+
+        def compute_coeffs() -> jax.Array:
+            return _spherical_m2l_coefficients_for_pair_projected(
+                centers_global[pair[0]],
+                centers_global[src_global],
+                moments_global[src_global],
+                quad_dirs,
+                quad_weights,
                 kappa,
                 order,
             )
@@ -689,16 +882,57 @@ def _eval_spherical_m2l_all_levels_closed(
     return local
 
 
+@partial(jax.jit, static_argnames=("order", "n_total_targets"))
+def _eval_spherical_m2l_all_levels_projected(
+    centers_global: jax.Array,
+    moments_global: jax.Array,
+    mpl_cnct: jax.Array,
+    n_total_targets: int,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
+    kappa: float,
+    order: int,
+    cutoff_radius: float,
+) -> jax.Array:
+    n_coeff = (order + 1) ** 2
+    local = jnp.zeros((n_total_targets, n_coeff), dtype=moments_global.dtype)
+
+    def scan_body(buf: jax.Array, pair: jax.Array) -> tuple[jax.Array, None]:
+        trg_global = pair[0]
+        src_global = pair[1]
+        box_distance = jnp.linalg.norm(centers_global[trg_global] - centers_global[src_global])
+
+        def compute_coeffs() -> jax.Array:
+            return _spherical_m2l_coefficients_for_pair_projected(
+                centers_global[trg_global],
+                centers_global[src_global],
+                moments_global[src_global],
+                quad_dirs,
+                quad_weights,
+                kappa,
+                order,
+            )
+
+        coeffs = jax.lax.cond(
+            (cutoff_radius > 0.0) & (box_distance > cutoff_radius),
+            lambda: jnp.zeros((n_coeff,), dtype=moments_global.dtype),
+            compute_coeffs,
+        )
+        buf = buf.at[trg_global].add(coeffs)
+        return buf, None
+
+    local, _ = jax.lax.scan(scan_body, local, mpl_cnct)
+    return local
+
+
 @partial(jax.jit, static_argnames=("order", "trg_ofs", "max_trg_lvl", "n_children"))
 def _yukawa_spherical_go_down_locals(
     locals_in: jax.Array,
     eval_boxcenters: jax.Array,
     trg_ofs: tuple[int, ...],
     max_trg_lvl: int,
-    local_indices: jax.Array,
-    source_indices: jax.Array,
-    big_basis_indices: jax.Array,
-    coupling_coeffs: jax.Array,
+    quad_dirs: jax.Array,
+    quad_weights: jax.Array,
     kappa: float,
     order: int,
     n_children: int = 8,
@@ -713,14 +947,12 @@ def _yukawa_spherical_go_down_locals(
         parent_local = jnp.arange(child_end - child_start) // n_children
 
         translated = jax.vmap(
-            lambda coeffs, old_center, new_center: _spherical_regular_translate_coeffs(
-                coeffs,
-                old_center,
+            lambda coeffs, old_center, new_center: _spherical_l2l_coefficients_projected(
                 new_center,
-                local_indices,
-                source_indices,
-                big_basis_indices,
-                coupling_coeffs,
+                old_center,
+                coeffs,
+                quad_dirs,
+                quad_weights,
                 kappa,
                 order,
             )
@@ -1311,9 +1543,7 @@ def _yukawa_fmm_field_spherical_m2l(
         return near / (4.0 * jnp.pi * eps0)
 
     order = int(p)
-    m2l_local_indices, m2l_source_indices, m2l_big_basis_indices, m2l_coupling_coeffs = (
-        _spherical_m2l_couplings(order)
-    )
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
     src_lvl = tree["lvl_info"][-2][1]
     trg_lvl = tree["lvl_info"][-2][0]
     src_leaf_offset = tree["src_ofs"][src_lvl]
@@ -1341,16 +1571,14 @@ def _yukawa_fmm_field_spherical_m2l(
     if tree["mpl_cnct"].size == 0:
         local_coeffs = jnp.zeros((target_centers.shape[0], n_coeff), dtype=moments_dtype)
     else:
-        local_coeffs = _eval_spherical_m2l_coefficients_closed(
+        local_coeffs = _eval_spherical_m2l_coefficients_projected(
             tree["boxcenters"],
             moments_global,
             tree["mpl_cnct"],
             trg_leaf_offset,
             target_centers.shape[0],
-            m2l_local_indices,
-            m2l_source_indices,
-            m2l_big_basis_indices,
-            m2l_coupling_coeffs,
+            quad_dirs,
+            quad_weights,
             kappa,
             order,
             cutoff_radius,
@@ -1404,12 +1632,7 @@ def _yukawa_fmm_field_spherical_multilevel(
         return near / (4.0 * jnp.pi * eps0)
 
     order = int(p)
-    m2l_local_indices, m2l_source_indices, m2l_big_basis_indices, m2l_coupling_coeffs = (
-        _spherical_m2l_couplings(order)
-    )
-    reg_local_indices, reg_source_indices, reg_big_basis_indices, reg_coupling_coeffs = (
-        _spherical_regular_couplings(order)
-    )
+    quad_dirs, quad_weights = _sphere_projection_quadrature(order)
     max_src_lvl = tree["lvl_info"][-2][1]
     max_trg_lvl = tree["lvl_info"][-2][0]
     src_leaf_offset = tree["src_ofs"][max_src_lvl]
@@ -1430,10 +1653,8 @@ def _yukawa_fmm_field_spherical_multilevel(
         tree["boxcenters"],
         tree["src_ofs"],
         max_src_lvl,
-        reg_local_indices,
-        reg_source_indices,
-        reg_big_basis_indices,
-        reg_coupling_coeffs,
+        quad_dirs,
+        quad_weights,
         kappa,
         order,
     )
@@ -1444,15 +1665,13 @@ def _yukawa_fmm_field_spherical_multilevel(
             dtype=moments.dtype,
         )
     else:
-        local_coeffs_all = _eval_spherical_m2l_all_levels_closed(
+        local_coeffs_all = _eval_spherical_m2l_all_levels_projected(
             tree["boxcenters"],
             moments,
             tree["mpl_cnct"],
             tree["trg_ofs"][max_trg_lvl + 1],
-            m2l_local_indices,
-            m2l_source_indices,
-            m2l_big_basis_indices,
-            m2l_coupling_coeffs,
+            quad_dirs,
+            quad_weights,
             kappa,
             order,
             cutoff_radius,
@@ -1463,10 +1682,8 @@ def _yukawa_fmm_field_spherical_multilevel(
         tree["eval_boxcenters"],
         tree["trg_ofs"],
         max_trg_lvl,
-        reg_local_indices,
-        reg_source_indices,
-        reg_big_basis_indices,
-        reg_coupling_coeffs,
+        quad_dirs,
+        quad_weights,
         kappa,
         order,
     )
