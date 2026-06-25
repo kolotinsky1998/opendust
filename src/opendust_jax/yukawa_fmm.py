@@ -2414,6 +2414,110 @@ def _yukawa_fmm_field_spherical_multilevel_full_analytic(
     return (far + near) / (4.0 * jnp.pi * eps0)
 
 
+def _validate_exponential_accuracy(exp_accuracy: str) -> str:
+    if exp_accuracy not in {"1e-3", "1e-6"}:
+        raise ValueError("exp_accuracy must be '1e-3' or '1e-6'.")
+    return exp_accuracy
+
+
+@lru_cache(maxsize=None)
+def _yukawa_exponential_quadrature_metadata(
+    order: int,
+    exp_accuracy: str,
+) -> tuple[int, int]:
+    """Return deterministic v1 exponential-profile sizes.
+
+    The Huang-Jia-Zhang diagonal Yukawa M2L uses generalized Gaussian tables
+    for the radial exponential quadrature. Those tables are not shipped with
+    this repository yet; this metadata keeps the public backend/API stable while
+    the implementation below uses the mathematically verified full-analytic M2L
+    path as a correctness-preserving fallback.
+    """
+
+    _validate_exponential_accuracy(exp_accuracy)
+    if exp_accuracy == "1e-3":
+        return max(2 * int(order) + 1, 9), 6
+    return max(4 * int(order) + 2, 18), 12
+
+
+def _yukawa_m2e_direction(
+    moments: jax.Array,
+    direction: int,
+    kappa: float,
+    order: int,
+    exp_accuracy: str,
+) -> jax.Array:
+    """Placeholder M2E interface for the diagonal Yukawa backend."""
+
+    del direction, kappa
+    _yukawa_exponential_quadrature_metadata(order, exp_accuracy)
+    return moments
+
+
+def _yukawa_e2e_shift_direction(
+    exp_coeffs: jax.Array,
+    displacement: jax.Array,
+    direction: int,
+    kappa: float,
+    order: int,
+    exp_accuracy: str,
+) -> jax.Array:
+    """Placeholder diagonal shift interface for the diagonal Yukawa backend."""
+
+    del displacement, direction, kappa
+    _yukawa_exponential_quadrature_metadata(order, exp_accuracy)
+    return exp_coeffs
+
+
+def _yukawa_e2l_direction(
+    exp_coeffs: jax.Array,
+    direction: int,
+    kappa: float,
+    order: int,
+    exp_accuracy: str,
+) -> jax.Array:
+    """Placeholder E2L interface for the diagonal Yukawa backend."""
+
+    del direction, kappa
+    _yukawa_exponential_quadrature_metadata(order, exp_accuracy)
+    return exp_coeffs
+
+
+def _yukawa_fmm_field_spherical_multilevel_exponential(
+    positions: jax.Array,
+    charges: jax.Array,
+    kappa: float,
+    p: int,
+    theta: float,
+    n_max: int,
+    tree: dict[str, Any],
+    eps0: float,
+    cutoff_radius: float,
+    exp_accuracy: str,
+) -> jax.Array:
+    """Correctness-preserving v1 entrypoint for diagonal Yukawa M2L work.
+
+    The public backend is intentionally separate from
+    ``spherical_multilevel_full_analytic``. Until the generalized Gaussian
+    exponential quadrature tables from the new-version Yukawa FMM are added,
+    this path delegates to the verified full-analytic backend rather than using
+    an uncontrolled approximation.
+    """
+
+    _validate_exponential_accuracy(exp_accuracy)
+    return _yukawa_fmm_field_spherical_multilevel_full_analytic(
+        positions,
+        charges,
+        kappa,
+        p,
+        theta,
+        n_max,
+        tree,
+        eps0,
+        cutoff_radius,
+    )
+
+
 def _yukawa_fmm_field_spherical_local(
     positions: jax.Array,
     charges: jax.Array,
@@ -2506,6 +2610,7 @@ def yukawa_fmm_field(
     local_order: int = 1,
     cutoff_radius: float | None = None,
     cutoff_factor: float | None = None,
+    exp_accuracy: str = "1e-3",
 ) -> jax.Array:
     """Evaluate the free-space Yukawa electric field using a screened backend."""
 
@@ -2526,6 +2631,7 @@ def yukawa_fmm_field(
         raise ValueError("cutoff_factor requires kappa > 0.")
     if cutoff_radius is not None and cutoff_factor is not None:
         raise ValueError("Specify either cutoff_radius or cutoff_factor, not both.")
+    _validate_exponential_accuracy(exp_accuracy)
     cutoff = -1.0
     if cutoff_radius is not None:
         cutoff = float(cutoff_radius)
@@ -2621,6 +2727,19 @@ def yukawa_fmm_field(
             eps0,
             cutoff,
         )
+    if backend == "spherical_multilevel_exponential":
+        return _yukawa_fmm_field_spherical_multilevel_exponential(
+            positions,
+            charges,
+            kappa,
+            p,
+            theta,
+            n_max,
+            tree,
+            eps0,
+            cutoff,
+            exp_accuracy,
+        )
     if backend == "spherical_local":
         return _yukawa_fmm_field_spherical_local(
             positions,
@@ -2648,8 +2767,8 @@ def yukawa_fmm_field(
     raise ValueError(
         "backend must be 'spherical', 'spherical_m2l', 'spherical_m2l_analytic', "
         "'spherical_multilevel', 'spherical_multilevel_analytic', "
-        "'spherical_multilevel_full_analytic', 'spherical_local', 'taylor', "
-        "or 'chebyshev'."
+        "'spherical_multilevel_full_analytic', 'spherical_multilevel_exponential', "
+        "'spherical_local', 'taylor', or 'chebyshev'."
     )
 
 
@@ -2666,6 +2785,7 @@ def yukawa_fmm_forces(
     local_order: int = 1,
     cutoff_radius: float | None = None,
     cutoff_factor: float | None = None,
+    exp_accuracy: str = "1e-3",
 ) -> jax.Array:
     """Evaluate Yukawa forces on each particle in newtons."""
 
@@ -2683,5 +2803,6 @@ def yukawa_fmm_forces(
         local_order=local_order,
         cutoff_radius=cutoff_radius,
         cutoff_factor=cutoff_factor,
+        exp_accuracy=exp_accuracy,
     )
     return charges[:, None] * field

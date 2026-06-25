@@ -13,6 +13,13 @@ from opendust_jax.fmm_poisson import (
 )
 from opendust_jax.geometry import CylinderDomain, points_inside_cylinder, sample_uniform_cylinder
 from opendust_jax.validation import ValidationMetrics, compute_force_metrics
+from opendust_jax.yukawa_exponential_tables import (
+    YukawaExponentialM2LTable,
+    apply_exponential_m2l_table,
+    build_yukawa_m2l_exponential_table,
+    exponential_m2l_operator_from_table,
+    validate_yukawa_m2l_exponential_table,
+)
 from opendust_jax.yukawa_fmm import (
     build_yukawa_tree,
     yukawa_fmm_field,
@@ -22,7 +29,10 @@ from opendust_jax.yukawa_fmm import (
 __all__ = [
     "CylinderDomain",
     "ValidationMetrics",
+    "YukawaExponentialM2LTable",
+    "apply_exponential_m2l_table",
     "build_fmm_tree",
+    "build_yukawa_m2l_exponential_table",
     "compute_force_metrics",
     "direct_coulomb_field",
     "direct_coulomb_forces",
@@ -33,6 +43,8 @@ __all__ = [
     "build_yukawa_tree",
     "points_inside_cylinder",
     "sample_uniform_cylinder",
+    "exponential_m2l_operator_from_table",
+    "validate_yukawa_m2l_exponential_table",
     "yukawa_fmm_field",
     "yukawa_fmm_forces",
 ]
