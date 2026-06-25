@@ -105,6 +105,18 @@ def test_yukawa_exponential_table_validates_all_directions(direction):
     assert validation["max_relative_frobenius_error"] < 1.0e-3
 
 
+def test_yukawa_exponential_table_reports_off_node_validation():
+    table = build_yukawa_m2l_exponential_table(4, 0.5, "+z", accuracy="1e-3")
+
+    validation = validate_yukawa_m2l_exponential_table(table, include_off_node=True)
+
+    assert validation["max_relative_frobenius_error"] < 1.0e-3
+    assert validation["n_off_node_tests"] > 0
+    assert validation["worst_off_node_index"] >= 0
+    assert validation["worst_off_node_displacement"] is not None
+    assert np.isfinite(validation["off_node_max_relative_frobenius_error"])
+
+
 def test_yukawa_exponential_table_rejects_unknown_accuracy():
     with pytest.raises(ValueError, match="accuracy"):
         build_yukawa_m2l_exponential_table(4, 0.5, "+z", accuracy="fast")
