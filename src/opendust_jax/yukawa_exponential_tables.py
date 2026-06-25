@@ -64,13 +64,23 @@ def _axis_for_direction(direction: str) -> tuple[int, float]:
     return axis, sign
 
 
-def _direction_grid(direction: str, accuracy: str) -> tuple[np.ndarray, np.ndarray, int, float, tuple[int, int]]:
+def _direction_grid(
+    direction: str,
+    accuracy: str,
+    grid_level: int = 0,
+) -> tuple[np.ndarray, np.ndarray, int, float, tuple[int, int]]:
     axis, sign = _axis_for_direction(direction)
-    main_values = (2.0, 2.5, 3.0, 4.0)
-    transverse_values = (-0.75, 0.0, 0.75)
+    if grid_level < 0:
+        raise ValueError("grid_level must be non-negative.")
+    main_count = 4 + 2 * int(grid_level)
+    transverse_count = 3 + 2 * int(grid_level)
+    transverse_extent = 0.75
     if accuracy == "1e-6":
-        main_values = (2.0, 2.25, 2.5, 3.0, 3.5, 4.0)
-        transverse_values = (-1.0, -0.5, 0.0, 0.5, 1.0)
+        main_count = 6 + 2 * int(grid_level)
+        transverse_count = 5 + 2 * int(grid_level)
+        transverse_extent = 1.0
+    main_values = np.linspace(2.0, 4.0, main_count)
+    transverse_values = np.linspace(-transverse_extent, transverse_extent, transverse_count)
     other_axes = tuple(idx for idx in range(3) if idx != axis)
     return (
         np.asarray(main_values, dtype=np.float64),
@@ -81,10 +91,14 @@ def _direction_grid(direction: str, accuracy: str) -> tuple[np.ndarray, np.ndarr
     )
 
 
-def _direction_nodes(direction: str, accuracy: str) -> np.ndarray:
+def _direction_nodes(direction: str, accuracy: str, grid_level: int = 0) -> np.ndarray:
     """Build deterministic admissible displacement nodes in box-size units."""
 
-    main_values, transverse_values, axis, sign, other_axes = _direction_grid(direction, accuracy)
+    main_values, transverse_values, axis, sign, other_axes = _direction_grid(
+        direction,
+        accuracy,
+        grid_level,
+    )
     nodes = []
     for main in main_values:
         for a in transverse_values:
@@ -98,10 +112,18 @@ def _direction_nodes(direction: str, accuracy: str) -> np.ndarray:
     return np.asarray(nodes, dtype=np.float64)
 
 
-def _direction_off_node_displacements(direction: str, accuracy: str) -> np.ndarray:
+def _direction_off_node_displacements(
+    direction: str,
+    accuracy: str,
+    grid_level: int = 0,
+) -> np.ndarray:
     """Build holdout displacements between table nodes."""
 
-    main_values, transverse_values, axis, sign, other_axes = _direction_grid(direction, accuracy)
+    main_values, transverse_values, axis, sign, other_axes = _direction_grid(
+        direction,
+        accuracy,
+        grid_level,
+    )
     main_mid = 0.5 * (main_values[:-1] + main_values[1:])
     transverse_mid = 0.5 * (transverse_values[:-1] + transverse_values[1:])
     nodes = []
@@ -140,11 +162,12 @@ def _build_raw_table(
     accuracy: str,
     dtype_name: str,
     s_exp_max: int | None,
+    grid_level: int,
 ) -> YukawaExponentialM2LTable:
     _validate_inputs(order, kappa_h, direction, accuracy)
     dtype = _dtype_from_name(dtype_name)
     n_coeff = (int(order) + 1) ** 2
-    nodes_np = _direction_nodes(direction, accuracy)
+    nodes_np = _direction_nodes(direction, accuracy, grid_level)
     n_nodes = int(nodes_np.shape[0])
     s_exp = n_nodes * n_coeff
 
@@ -176,6 +199,11 @@ def _build_raw_table(
             f"target={target:.3e}, worst_node_index={worst}."
         )
 
+    main_values, transverse_values, axis, sign, other_axes = _direction_grid(
+        direction,
+        accuracy,
+        grid_level,
+    )
     metadata = {
         "target_relative_error": target,
         "max_relative_frobenius_error": validation["max_relative_frobenius_error"],
@@ -183,12 +211,13 @@ def _build_raw_table(
         "n_coeff": n_coeff,
         "n_nodes": n_nodes,
         "s_exp": s_exp,
-        "axis": _direction_grid(direction, accuracy)[2],
-        "sign": _direction_grid(direction, accuracy)[3],
-        "other_axes": _direction_grid(direction, accuracy)[4],
-        "main_values": tuple(float(x) for x in _direction_grid(direction, accuracy)[0]),
-        "transverse_values": tuple(float(x) for x in _direction_grid(direction, accuracy)[1]),
-        "representation": "deterministic_operator_table_lagrange",
+        "grid_level": int(grid_level),
+        "axis": axis,
+        "sign": sign,
+        "other_axes": other_axes,
+        "main_values": tuple(float(x) for x in main_values),
+        "transverse_values": tuple(float(x) for x in transverse_values),
+        "representation": "deterministic_operator_table_local_linear",
     }
     return YukawaExponentialM2LTable(
         order=int(order),
@@ -210,6 +239,7 @@ def _build_cached_table(
     direction: str,
     accuracy: str,
     dtype_name: str,
+    grid_level: int,
 ) -> YukawaExponentialM2LTable:
     return _build_raw_table(
         order=order,
@@ -218,6 +248,7 @@ def _build_cached_table(
         accuracy=accuracy,
         dtype_name=dtype_name,
         s_exp_max=None,
+        grid_level=grid_level,
     )
 
 
@@ -229,6 +260,8 @@ def build_yukawa_m2l_exponential_table(
     dtype: Any = jnp.complex64,
     s_exp_max: int | None = None,
     require_off_node_accuracy: bool = False,
+    grid_level: int = 0,
+    max_grid_level: int | None = None,
 ) -> YukawaExponentialM2LTable:
     """Build or fetch a deterministic operator table for Yukawa M2L.
 
@@ -236,43 +269,72 @@ def build_yukawa_m2l_exponential_table(
     diagnostic guard used by negative tests and exploratory runs.
     """
 
+    _validate_inputs(order, kappa_h, direction, accuracy)
     rounded_kappa_h = round(float(kappa_h), 8)
     dtype_name = _dtype_name(dtype)
     if s_exp_max is not None or require_off_node_accuracy:
-        table = _build_raw_table(
-            order=int(order),
-            kappa_h=rounded_kappa_h,
-            direction=direction,
-            accuracy=accuracy,
-            dtype_name=dtype_name,
-            s_exp_max=None if s_exp_max is None else int(s_exp_max),
+        target = _ACCURACY_TARGETS[accuracy]
+        last_validation = None
+        last_table = None
+        final_grid_level = (
+            int(grid_level) + 3
+            if require_off_node_accuracy and max_grid_level is None
+            else int(grid_level)
+            if max_grid_level is None
+            else int(max_grid_level)
         )
-        if require_off_node_accuracy:
+        if final_grid_level < int(grid_level):
+            raise ValueError("max_grid_level must be greater than or equal to grid_level.")
+        for current_grid_level in range(int(grid_level), final_grid_level + 1):
+            table = _build_raw_table(
+                order=int(order),
+                kappa_h=rounded_kappa_h,
+                direction=direction,
+                accuracy=accuracy,
+                dtype_name=dtype_name,
+                s_exp_max=None if s_exp_max is None else int(s_exp_max),
+                grid_level=current_grid_level,
+            )
+            last_table = table
+            if not require_off_node_accuracy:
+                return table
             validation = validate_yukawa_m2l_exponential_table(table, include_off_node=True)
             table.metadata.update(validation)
-            target = _ACCURACY_TARGETS[accuracy]
+            last_validation = validation
             if validation["off_node_max_relative_frobenius_error"] > target:
-                raise RuntimeError(
-                    "Yukawa M2L table failed off-node validation: "
-                    "off_node_max_relative_frobenius_error="
-                    f"{validation['off_node_max_relative_frobenius_error']:.3e}, "
-                    f"target={target:.3e}, "
-                    f"worst_off_node_index={validation['worst_off_node_index']}."
-                )
-        return table
-    return _build_cached_table(int(order), rounded_kappa_h, direction, accuracy, dtype_name)
+                continue
+            return table
+        raise RuntimeError(
+            "Yukawa M2L table failed off-node validation: "
+            "off_node_max_relative_frobenius_error="
+            f"{last_validation['off_node_max_relative_frobenius_error']:.3e}, "
+            f"target={target:.3e}, "
+            f"worst_off_node_index={last_validation['worst_off_node_index']}, "
+            f"grid_level={last_table.metadata['grid_level']}."
+        )
+    return _build_cached_table(
+        int(order),
+        rounded_kappa_h,
+        direction,
+        accuracy,
+        dtype_name,
+        int(grid_level),
+    )
 
 
-def _lagrange_weights_1d(x: jax.Array, nodes: jax.Array) -> jax.Array:
+def _local_linear_weights_1d(x: jax.Array, nodes: jax.Array) -> jax.Array:
     x = jnp.asarray(x, dtype=nodes.dtype)
     diff = jnp.abs(x - nodes)
     nearest = jnp.argmin(diff)
     exact = jax.nn.one_hot(nearest, nodes.shape[0], dtype=nodes.dtype)
-    denom = nodes[:, None] - nodes[None, :]
-    numerator = x - nodes[None, :]
-    mask = jnp.eye(nodes.shape[0], dtype=bool)
-    ratios = jnp.where(mask, 1.0, numerator / jnp.where(mask, 1.0, denom))
-    weights = jnp.prod(ratios, axis=1)
+    right = jnp.clip(jnp.searchsorted(nodes, x, side="right"), 1, nodes.shape[0] - 1)
+    left = right - 1
+    x_left = nodes[left]
+    x_right = nodes[right]
+    t = jnp.clip((x - x_left) / jnp.maximum(x_right - x_left, 1.0e-30), 0.0, 1.0)
+    weights = jnp.zeros_like(nodes)
+    weights = weights.at[left].set(1.0 - t)
+    weights = weights.at[right].add(t)
     return jnp.where(diff[nearest] < 1.0e-7, exact, weights)
 
 
@@ -288,9 +350,9 @@ def _interpolation_weights(table: YukawaExponentialM2LTable, displacement: jax.A
     first_transverse = displacement[other_axes[0]]
     second_transverse = displacement[other_axes[1]]
 
-    main_weights = _lagrange_weights_1d(main_coord, main_values)
-    first_weights = _lagrange_weights_1d(first_transverse, transverse_values)
-    second_weights = _lagrange_weights_1d(second_transverse, transverse_values)
+    main_weights = _local_linear_weights_1d(main_coord, main_values)
+    first_weights = _local_linear_weights_1d(first_transverse, transverse_values)
+    second_weights = _local_linear_weights_1d(second_transverse, transverse_values)
     return (
         main_weights[:, None, None]
         * first_weights[None, :, None]
@@ -377,7 +439,11 @@ def validate_yukawa_m2l_exponential_table(
         return validation
 
     if test_displacements is None:
-        test_displacements = _direction_off_node_displacements(table.direction, table.accuracy)
+        test_displacements = _direction_off_node_displacements(
+            table.direction,
+            table.accuracy,
+            int(table.metadata.get("grid_level", 0)),
+        )
     off_node_errors = []
     for displacement in test_displacements:
         approx = np.asarray(exponential_m2l_operator_from_table(table, displacement))

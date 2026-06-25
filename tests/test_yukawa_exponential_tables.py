@@ -63,6 +63,21 @@ def test_yukawa_exponential_table_cache_returns_equivalent_table():
     assert first is second
 
 
+def test_yukawa_exponential_table_grid_level_refines_modes():
+    coarse = build_yukawa_m2l_exponential_table(4, 0.5, "+z", accuracy="1e-3")
+    refined = build_yukawa_m2l_exponential_table(
+        4,
+        0.5,
+        "+z",
+        accuracy="1e-3",
+        grid_level=1,
+    )
+
+    assert refined.metadata["grid_level"] == 1
+    assert refined.metadata["s_exp"] > coarse.metadata["s_exp"]
+    assert refined.nodes.shape[0] > coarse.nodes.shape[0]
+
+
 def test_yukawa_exponential_table_matches_analytic_m2l_at_nodes():
     order = 4
     kappa_h = 1.0
@@ -111,6 +126,7 @@ def test_yukawa_exponential_table_reports_off_node_validation():
     validation = validate_yukawa_m2l_exponential_table(table, include_off_node=True)
 
     assert validation["max_relative_frobenius_error"] < 1.0e-3
+    assert table.metadata["grid_level"] == 0
     assert validation["n_off_node_tests"] > 0
     assert validation["worst_off_node_index"] >= 0
     assert validation["worst_off_node_displacement"] is not None
