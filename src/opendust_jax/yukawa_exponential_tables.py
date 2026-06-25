@@ -217,7 +217,9 @@ def _build_raw_table(
         "other_axes": other_axes,
         "main_values": tuple(float(x) for x in main_values),
         "transverse_values": tuple(float(x) for x in transverse_values),
-        "representation": "deterministic_operator_table_local_linear",
+        "main_interpolation_degree": int(min(3, len(main_values) - 1)),
+        "transverse_interpolation_degree": int(min(3, len(transverse_values) - 1)),
+        "representation": "deterministic_operator_table_local_polynomial",
     }
     return YukawaExponentialM2LTable(
         order=int(order),
@@ -322,19 +324,28 @@ def build_yukawa_m2l_exponential_table(
     )
 
 
-def _local_linear_weights_1d(x: jax.Array, nodes: jax.Array) -> jax.Array:
+def _local_polynomial_weights_1d(x: jax.Array, nodes: jax.Array) -> jax.Array:
     x = jnp.asarray(x, dtype=nodes.dtype)
+    n_nodes = nodes.shape[0]
+    stencil_size = min(4, n_nodes)
     diff = jnp.abs(x - nodes)
     nearest = jnp.argmin(diff)
     exact = jax.nn.one_hot(nearest, nodes.shape[0], dtype=nodes.dtype)
-    right = jnp.clip(jnp.searchsorted(nodes, x, side="right"), 1, nodes.shape[0] - 1)
-    left = right - 1
-    x_left = nodes[left]
-    x_right = nodes[right]
-    t = jnp.clip((x - x_left) / jnp.maximum(x_right - x_left, 1.0e-30), 0.0, 1.0)
-    weights = jnp.zeros_like(nodes)
-    weights = weights.at[left].set(1.0 - t)
-    weights = weights.at[right].add(t)
+    right = jnp.searchsorted(nodes, x, side="right")
+    start = jnp.clip(right - stencil_size // 2, 0, n_nodes - stencil_size)
+    indices = jnp.arange(n_nodes)
+    selected = (indices >= start) & (indices < start + stencil_size)
+
+    xi = nodes[:, None]
+    xj = nodes[None, :]
+    i_idx = indices[:, None]
+    j_idx = indices[None, :]
+    active_factor = selected[None, :] & (i_idx != j_idx)
+    denom = xi - xj
+    ratio = (x - xj) / jnp.where(active_factor, denom, 1.0)
+    factors = jnp.where(active_factor, ratio, 1.0)
+    weights = jnp.prod(factors, axis=1)
+    weights = jnp.where(selected, weights, 0.0)
     return jnp.where(diff[nearest] < 1.0e-7, exact, weights)
 
 
@@ -350,9 +361,9 @@ def _interpolation_weights(table: YukawaExponentialM2LTable, displacement: jax.A
     first_transverse = displacement[other_axes[0]]
     second_transverse = displacement[other_axes[1]]
 
-    main_weights = _local_linear_weights_1d(main_coord, main_values)
-    first_weights = _local_linear_weights_1d(first_transverse, transverse_values)
-    second_weights = _local_linear_weights_1d(second_transverse, transverse_values)
+    main_weights = _local_polynomial_weights_1d(main_coord, main_values)
+    first_weights = _local_polynomial_weights_1d(first_transverse, transverse_values)
+    second_weights = _local_polynomial_weights_1d(second_transverse, transverse_values)
     return (
         main_weights[:, None, None]
         * first_weights[None, :, None]
