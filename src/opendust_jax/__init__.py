@@ -12,7 +12,10 @@ from opendust_jax.fmm_poisson import (
     fmm_coulomb_forces,
 )
 from opendust_jax.geometry import CylinderDomain, points_inside_cylinder, sample_uniform_cylinder
-from opendust_jax.pair_forces import softened_yukawa_forces
+from opendust_jax.pair_forces import (
+    softened_yukawa_forces,
+    softened_yukawa_forces_2d,
+)
 from opendust_jax.validation import ValidationMetrics, compute_force_metrics
 from opendust_jax.yukawa_exponential_tables import (
     YukawaExponentialM2LTable,
@@ -45,6 +48,7 @@ __all__ = [
     "points_inside_cylinder",
     "sample_uniform_cylinder",
     "softened_yukawa_forces",
+    "softened_yukawa_forces_2d",
     "exponential_m2l_operator_from_table",
     "validate_yukawa_m2l_exponential_table",
     "yukawa_fmm_field",

@@ -35,7 +35,10 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from opendust_jax.pair_forces import softened_yukawa_forces
+from opendust_jax.pair_forces import (
+    softened_yukawa_forces,
+    softened_yukawa_forces_2d,
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,7 @@ class Measurement:
     implementation: str
     n_particles: int
     block_size: int | None
+    source_block_size: int | None
     compile_or_setup_s: float
     median_s: float
     minimum_s: float
@@ -54,6 +58,7 @@ class Measurement:
 
 @dataclass(frozen=True)
 class Validation:
+    backend: str
     n_particles: int
     relative_l2: float
     max_absolute_error: float
@@ -67,6 +72,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--powers", type=int, nargs="+", default=[15, 16, 17, 18])
     parser.add_argument("--block-sizes", type=int, nargs="+", default=[32, 64, 128, 256])
+    parser.add_argument(
+        "--source-block-sizes",
+        type=int,
+        nargs="*",
+        default=[],
+        help=(
+            "Also benchmark 2D tiling for every target block size using these "
+            "source tile sizes. Omit to run only the original 1D backend."
+        ),
+    )
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=10)
     parser.add_argument("--device-index", default="0")
@@ -85,6 +100,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("all powers must be positive")
     if any(size <= 0 for size in args.block_sizes):
         parser.error("all block sizes must be positive")
+    if any(size <= 0 for size in args.source_block_sizes):
+        parser.error("all source block sizes must be positive")
     if args.warmup < 1 or args.repeat < 1:
         parser.error("warmup and repeat must both be positive")
     return args
@@ -208,17 +225,28 @@ def jax_force_call(
     screening_length: float,
     softening: float,
     block_size: int,
+    source_block_size: int | None = None,
 ) -> np.ndarray:
     # device_put plus np.asarray makes both transfer directions part of the
     # timed end-to-end call. np.asarray also provides explicit synchronization.
     device_positions = jax.device_put(positions)
-    forces = softened_yukawa_forces(
-        device_positions,
-        prefactor,
-        screening_length,
-        softening,
-        block_size=block_size,
-    )
+    if source_block_size is None:
+        forces = softened_yukawa_forces(
+            device_positions,
+            prefactor,
+            screening_length,
+            softening,
+            block_size=block_size,
+        )
+    else:
+        forces = softened_yukawa_forces_2d(
+            device_positions,
+            prefactor,
+            screening_length,
+            softening,
+            target_block_size=block_size,
+            source_block_size=source_block_size,
+        )
     forces.block_until_ready()
     return np.asarray(forces)
 
@@ -227,6 +255,7 @@ def measurement_from_samples(
     implementation: str,
     n_particles: int,
     block_size: int | None,
+    source_block_size: int | None,
     compile_or_setup_s: float,
     samples: list[float],
 ) -> Measurement:
@@ -236,6 +265,7 @@ def measurement_from_samples(
         implementation=implementation,
         n_particles=n_particles,
         block_size=block_size,
+        source_block_size=source_block_size,
         compile_or_setup_s=compile_or_setup_s,
         median_s=median,
         minimum_s=min(samples),
@@ -253,6 +283,8 @@ def validate_against_openmm(
     prefactor: float,
     screening_length: float,
     softening: float,
+    block_size: int = 128,
+    source_block_size: int | None = None,
 ) -> Validation:
     expected = openmm_force_call(context, positions).astype(np.float64)
     actual = jax_force_call(
@@ -260,7 +292,8 @@ def validate_against_openmm(
         prefactor=prefactor,
         screening_length=screening_length,
         softening=softening,
-        block_size=128,
+        block_size=block_size,
+        source_block_size=source_block_size,
     ).astype(np.float64)
     difference = actual - expected
     expected_norm = np.linalg.norm(expected)
@@ -269,6 +302,7 @@ def validate_against_openmm(
     denominator = np.maximum(np.abs(expected), np.finfo(np.float32).eps)
     max_relative = float(np.max(np.abs(difference) / denominator))
     return Validation(
+        backend="jax-1d" if source_block_size is None else "jax-2d",
         n_particles=len(positions),
         relative_l2=float(relative_l2),
         max_absolute_error=max_absolute,
@@ -323,7 +357,7 @@ def write_csv(path: Path, measurements: list[Measurement]) -> None:
 def write_report(
     path: Path,
     info: dict[str, str],
-    validation: Validation,
+    validations: list[Validation],
     measurements: list[Measurement],
 ) -> None:
     openmm_by_n = {
@@ -331,13 +365,14 @@ def write_report(
         for item in measurements
         if item.implementation == "openmm"
     }
-    best_jax: dict[int, Measurement] = {}
+    best_jax: dict[tuple[str, int], Measurement] = {}
     for item in measurements:
-        if item.implementation != "jax":
+        if item.implementation not in ("jax-1d", "jax-2d"):
             continue
-        previous = best_jax.get(item.n_particles)
+        key = (item.implementation, item.n_particles)
+        previous = best_jax.get(key)
         if previous is None or item.median_s < previous.median_s:
-            best_jax[item.n_particles] = item
+            best_jax[key] = item
 
     lines = [
         "# JAX/OpenMM direct pair-force benchmark",
@@ -351,50 +386,90 @@ def write_report(
             "",
             "## Correctness",
             "",
-            "| N | relative L2 | max abs error | max relative error | finite |",
-            "|---:|---:|---:|---:|:---:|",
-            f"| {validation.n_particles} | {validation.relative_l2:.6e} | "
-            f"{validation.max_absolute_error:.6e} | "
-            f"{validation.max_relative_error:.6e} | {validation.all_finite} |",
+            "| backend | N | relative L2 | max abs error | max relative error | finite |",
+            "|:---|---:|---:|---:|---:|:---:|",
+        ]
+    )
+    for validation in validations:
+        lines.append(
+            f"| {validation.backend} | {validation.n_particles} | "
+            f"{validation.relative_l2:.6e} | {validation.max_absolute_error:.6e} | "
+            f"{validation.max_relative_error:.6e} | {validation.all_finite} |"
+        )
+    lines.extend(
+        [
             "",
             "Required relative-L2 tolerance: `5e-5`.",
             "",
-            "## Best JAX result per particle count",
+            "## Best JAX result per backend and particle count",
             "",
-            "| N | JAX block | JAX median, s | OpenMM median, s | JAX/OpenMM | "
-            "JAX ordered pairs/s | JAX ns/pair | time growth |",
-            "|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| N | backend | target block | source block | JAX median, s | "
+            "OpenMM median, s | JAX/OpenMM | ordered pairs/s | time growth |",
+            "|---:|:---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
-    previous_jax: Measurement | None = None
-    for n_particles in sorted(best_jax):
-        jax_item = best_jax[n_particles]
+    previous_jax: dict[str, Measurement] = {}
+    for implementation, n_particles in sorted(
+        best_jax, key=lambda key: (key[1], key[0])
+    ):
+        jax_item = best_jax[(implementation, n_particles)]
         openmm_item = openmm_by_n[n_particles]
         ratio = jax_item.median_s / openmm_item.median_s
+        previous = previous_jax.get(implementation)
         growth = (
             "-"
-            if previous_jax is None
-            else f"{jax_item.median_s / previous_jax.median_s:.3f}x"
+            if previous is None
+            else f"{jax_item.median_s / previous.median_s:.3f}x"
+        )
+        source_block = (
+            "-"
+            if jax_item.source_block_size is None
+            else str(jax_item.source_block_size)
         )
         lines.append(
-            f"| {n_particles} | {jax_item.block_size} | {jax_item.median_s:.6f} | "
+            f"| {n_particles} | {implementation} | {jax_item.block_size} | "
+            f"{source_block} | {jax_item.median_s:.6f} | "
             f"{openmm_item.median_s:.6f} | {ratio:.3f} | "
-            f"{jax_item.ordered_pairs_per_s:.6e} | "
-            f"{jax_item.ns_per_ordered_pair:.6e} | {growth} |"
+            f"{jax_item.ordered_pairs_per_s:.6e} | {growth} |"
         )
-        previous_jax = jax_item
+        previous_jax[implementation] = jax_item
 
+    particle_counts = sorted(openmm_by_n)
+    best_overall = {
+        n: min(
+            (item for (implementation, item_n), item in best_jax.items() if item_n == n),
+            key=lambda item: item.median_s,
+        )
+        for n in particle_counts
+    }
     ratios = [
-        best_jax[n].median_s / openmm_by_n[n].median_s for n in sorted(best_jax)
+        best_overall[n].median_s / openmm_by_n[n].median_s for n in particle_counts
     ]
     minimum_ratio = min(ratios)
     maximum_ratio = max(ratios)
-    conclusion = (
+    conclusion_parts = [
         f"The measured JAX/OpenMM time ratio ranges from {minimum_ratio:.3f} to "
         f"{maximum_ratio:.3f}. No performance pass/fail threshold is applied. "
         "Use this range and an Nsight profile to decide whether to retain pure "
         "XLA or next evaluate symmetric tiling and Pallas."
-    )
+    ]
+    common_counts = [
+        n
+        for n in particle_counts
+        if ("jax-1d", n) in best_jax and ("jax-2d", n) in best_jax
+    ]
+    if common_counts:
+        tiling_speedups = [
+            best_jax[("jax-1d", n)].median_s
+            / best_jax[("jax-2d", n)].median_s
+            for n in common_counts
+        ]
+        conclusion_parts.append(
+            "The best 2D tile is between "
+            f"{min(tiling_speedups):.3f}x and {max(tiling_speedups):.3f}x "
+            "as fast as the best 1D tile (values below 1 mean a slowdown)."
+        )
+    conclusion = " ".join(conclusion_parts)
     lines.extend(
         [
             "",
@@ -413,8 +488,8 @@ def write_report(
 
 def print_summary(measurements: list[Measurement]) -> None:
     print(
-        "implementation\tN\tblock\tcompile/setup_s\tmedian_s\tmin_s\t"
-        "p90_s\tordered_pairs/s\tprocess_gpu_MiB"
+        "implementation\tN\ttarget_block\tsource_block\tcompile/setup_s\t"
+        "median_s\tmin_s\tp90_s\tordered_pairs/s\tprocess_gpu_MiB"
     )
     for item in measurements:
         memory = (
@@ -423,8 +498,13 @@ def print_summary(measurements: list[Measurement]) -> None:
             else f"{item.process_gpu_memory_mib:.1f}"
         )
         block = "-" if item.block_size is None else str(item.block_size)
+        source_block = (
+            "-"
+            if item.source_block_size is None
+            else str(item.source_block_size)
+        )
         print(
-            f"{item.implementation}\t{item.n_particles}\t{block}\t"
+            f"{item.implementation}\t{item.n_particles}\t{block}\t{source_block}\t"
             f"{item.compile_or_setup_s:.6f}\t{item.median_s:.6f}\t"
             f"{item.minimum_s:.6f}\t{item.p90_s:.6f}\t"
             f"{item.ordered_pairs_per_s:.6e}\t{memory}"
@@ -466,16 +546,34 @@ def main() -> None:
         device_index=args.device_index,
         platform_name=openmm_platform_name,
     )
-    validation = validate_against_openmm(
-        validation_positions,
-        validation_context,
-        prefactor=prefactor,
-        screening_length=screening_length,
-        softening=softening,
-    )
+    validations = [
+        validate_against_openmm(
+            validation_positions,
+            validation_context,
+            prefactor=prefactor,
+            screening_length=screening_length,
+            softening=softening,
+        )
+    ]
+    if args.source_block_sizes:
+        validations.append(
+            validate_against_openmm(
+                validation_positions,
+                validation_context,
+                prefactor=prefactor,
+                screening_length=screening_length,
+                softening=softening,
+                block_size=args.block_sizes[0],
+                source_block_size=args.source_block_sizes[0],
+            )
+        )
     del validation_context, validation_integrator
-    print(f"Validation: {validation}")
-    if not validation.all_finite or validation.relative_l2 > 5.0e-5:
+    for validation in validations:
+        print(f"Validation: {validation}")
+    if any(
+        not validation.all_finite or validation.relative_l2 > 5.0e-5
+        for validation in validations
+    ):
         raise SystemExit("Correctness validation failed; benchmark aborted.")
 
     measurements: list[Measurement] = []
@@ -496,7 +594,7 @@ def main() -> None:
         )
         measurements.append(
             measurement_from_samples(
-                "openmm", n_particles, None, setup_s, openmm_samples
+                "openmm", n_particles, None, None, setup_s, openmm_samples
             )
         )
         del context, integrator
@@ -524,14 +622,55 @@ def main() -> None:
             )
             measurements.append(
                 measurement_from_samples(
-                    "jax", n_particles, block_size, compile_s, jax_samples
+                    "jax-1d",
+                    n_particles,
+                    block_size,
+                    None,
+                    compile_s,
+                    jax_samples,
                 )
             )
+
+            for source_block_size in args.source_block_sizes:
+                compile_start = time.perf_counter()
+                jax_force_call(
+                    positions,
+                    prefactor=prefactor,
+                    screening_length=screening_length,
+                    softening=softening,
+                    block_size=block_size,
+                    source_block_size=source_block_size,
+                )
+                compile_s = time.perf_counter() - compile_start
+                jax_samples, _ = measure(
+                    lambda block_size=block_size, source_block_size=source_block_size: (
+                        jax_force_call(
+                            positions,
+                            prefactor=prefactor,
+                            screening_length=screening_length,
+                            softening=softening,
+                            block_size=block_size,
+                            source_block_size=source_block_size,
+                        )
+                    ),
+                    args.warmup,
+                    args.repeat,
+                )
+                measurements.append(
+                    measurement_from_samples(
+                        "jax-2d",
+                        n_particles,
+                        block_size,
+                        source_block_size,
+                        compile_s,
+                        jax_samples,
+                    )
+                )
 
     csv_path = args.output_directory / "pair_forces_results.csv"
     report_path = args.output_directory / "pair_forces_report.md"
     write_csv(csv_path, measurements)
-    write_report(report_path, info, validation, measurements)
+    write_report(report_path, info, validations, measurements)
     print_summary(measurements)
     print(f"CSV: {csv_path}")
     print(f"Report: {report_path}")

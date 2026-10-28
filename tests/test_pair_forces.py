@@ -12,7 +12,10 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from opendust_jax.pair_forces import softened_yukawa_forces
+from opendust_jax.pair_forces import (
+    softened_yukawa_forces,
+    softened_yukawa_forces_2d,
+)
 
 
 def numpy_reference(
@@ -92,6 +95,54 @@ def test_total_internal_force_is_nearly_zero():
     assert np.linalg.norm(total) <= 2e-6 * scale
 
 
+@pytest.mark.parametrize("target_block_size", [1, 3, 8])
+@pytest.mark.parametrize("source_block_size", [1, 2, 7])
+def test_2d_tiling_matches_numpy_and_1d_backend(
+    target_block_size, source_block_size
+):
+    positions = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.7, 0.1, -0.2],
+            [-0.3, 1.1, 0.4],
+            [0.2, -0.6, 0.8],
+            [1.3, 0.2, -0.4],
+        ],
+        dtype=np.float32,
+    )
+    expected = numpy_reference(positions, 2.5, 0.8, 0.03)
+    baseline = softened_yukawa_forces(
+        positions, 2.5, 0.8, 0.03, block_size=4
+    )
+    actual = softened_yukawa_forces_2d(
+        positions,
+        2.5,
+        0.8,
+        0.03,
+        target_block_size=target_block_size,
+        source_block_size=source_block_size,
+    )
+    np.testing.assert_allclose(np.asarray(actual), expected, rtol=5e-6, atol=2e-6)
+    np.testing.assert_allclose(
+        np.asarray(actual), np.asarray(baseline), rtol=5e-6, atol=2e-6
+    )
+
+
+def test_2d_tiling_single_particle_is_finite_and_zero():
+    actual = softened_yukawa_forces_2d(
+        jnp.zeros((1, 3)),
+        1.0,
+        1.0,
+        1.0e-3,
+        target_block_size=8,
+        source_block_size=7,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(actual), np.zeros((1, 3), dtype=np.float32)
+    )
+    assert np.all(np.isfinite(np.asarray(actual)))
+
+
 def test_rejects_invalid_shape_and_block_size():
     with pytest.raises(ValueError, match="shape"):
         softened_yukawa_forces(jnp.zeros((3, 2)), 1.0, 1.0, 0.0)
@@ -101,3 +152,19 @@ def test_rejects_invalid_shape_and_block_size():
         softened_yukawa_forces(jnp.zeros((3, 3)), 1.0, 0.0, 0.0)
     with pytest.raises(ValueError, match="softening"):
         softened_yukawa_forces(jnp.zeros((3, 3)), 1.0, 1.0, -1.0)
+    with pytest.raises(ValueError, match="target_block_size"):
+        softened_yukawa_forces_2d(
+            jnp.zeros((3, 3)),
+            1.0,
+            1.0,
+            0.0,
+            target_block_size=0,
+        )
+    with pytest.raises(ValueError, match="source_block_size"):
+        softened_yukawa_forces_2d(
+            jnp.zeros((3, 3)),
+            1.0,
+            1.0,
+            0.0,
+            source_block_size=0,
+        )

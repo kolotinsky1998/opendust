@@ -34,3 +34,22 @@ python3 performance/JAX/benchmark_pair_forces.py \
 
 Use `--allow-non-cuda` only for diagnostic runs. Such results must not be used
 for the JAX/OpenMM performance conclusion.
+
+## Compare 1D and 2D tiling
+
+The original backend evaluates one target tile against all sources. Pass
+`--source-block-sizes` to additionally benchmark the bounded 2D backend for
+every requested target/source tile combination:
+
+```bash
+python3 performance/JAX/benchmark_pair_forces.py \
+  --powers 15 16 17 18 \
+  --block-sizes 256 \
+  --source-block-sizes 128 256 512 1024 \
+  --warmup 3 \
+  --repeat 10
+```
+
+The CSV identifies the implementations as `jax-1d` and `jax-2d`, and records
+both target and source block sizes. Omitting `--source-block-sizes` preserves
+the original benchmark behavior.
