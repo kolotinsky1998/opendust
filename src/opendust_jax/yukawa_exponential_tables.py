@@ -155,6 +155,12 @@ def _m2l_operator_for_displacement(displacement: np.ndarray, kappa_h: float, ord
     return np.asarray(operator).T
 
 
+def _yukawa_radial_scale(displacement: jax.Array | np.ndarray, kappa_h: float) -> jax.Array:
+    displacement = jnp.asarray(displacement)
+    radius = jnp.maximum(jnp.linalg.norm(displacement), 1.0e-30)
+    return jnp.exp(-float(kappa_h) * radius) / radius
+
+
 def _build_raw_table(
     order: int,
     kappa_h: float,
@@ -179,9 +185,11 @@ def _build_raw_table(
 
     operators = [_m2l_operator_for_displacement(node, kappa_h, order) for node in nodes_np]
     operators_np = np.asarray(operators)
+    scales_np = np.asarray([float(_yukawa_radial_scale(node, kappa_h)) for node in nodes_np], dtype=np.float32)
+    normalized_operators_np = operators_np / scales_np[:, None, None]
 
     m2e_np = np.tile(np.eye(n_coeff, dtype=np.complex64), (n_nodes, 1))
-    e2l_np = np.concatenate(operators_np, axis=1).astype(np.complex64)
+    e2l_np = np.concatenate(normalized_operators_np, axis=1).astype(np.complex64)
     node_weights_np = np.ones((n_nodes,), dtype=np.float32) / max(n_nodes, 1)
 
     target = _ACCURACY_TARGETS[accuracy]
@@ -190,6 +198,7 @@ def _build_raw_table(
         m2e_np,
         e2l_np,
         operators_np,
+        scales_np,
     )
     if validation["max_relative_frobenius_error"] > target:
         worst = validation["worst_node_index"]
@@ -217,9 +226,10 @@ def _build_raw_table(
         "other_axes": other_axes,
         "main_values": tuple(float(x) for x in main_values),
         "transverse_values": tuple(float(x) for x in transverse_values),
-        "main_interpolation_degree": int(min(3, len(main_values) - 1)),
-        "transverse_interpolation_degree": int(min(3, len(transverse_values) - 1)),
-        "representation": "deterministic_operator_table_local_polynomial",
+        "main_interpolation_degree": 1,
+        "transverse_interpolation_degree": 1,
+        "operator_scaling": "exp(-kappa_h*r)/r",
+        "representation": "deterministic_scaled_operator_table_local_linear",
     }
     return YukawaExponentialM2LTable(
         order=int(order),
@@ -324,28 +334,19 @@ def build_yukawa_m2l_exponential_table(
     )
 
 
-def _local_polynomial_weights_1d(x: jax.Array, nodes: jax.Array) -> jax.Array:
+def _local_linear_weights_1d(x: jax.Array, nodes: jax.Array) -> jax.Array:
     x = jnp.asarray(x, dtype=nodes.dtype)
-    n_nodes = nodes.shape[0]
-    stencil_size = min(4, n_nodes)
     diff = jnp.abs(x - nodes)
     nearest = jnp.argmin(diff)
     exact = jax.nn.one_hot(nearest, nodes.shape[0], dtype=nodes.dtype)
-    right = jnp.searchsorted(nodes, x, side="right")
-    start = jnp.clip(right - stencil_size // 2, 0, n_nodes - stencil_size)
-    indices = jnp.arange(n_nodes)
-    selected = (indices >= start) & (indices < start + stencil_size)
-
-    xi = nodes[:, None]
-    xj = nodes[None, :]
-    i_idx = indices[:, None]
-    j_idx = indices[None, :]
-    active_factor = selected[None, :] & (i_idx != j_idx)
-    denom = xi - xj
-    ratio = (x - xj) / jnp.where(active_factor, denom, 1.0)
-    factors = jnp.where(active_factor, ratio, 1.0)
-    weights = jnp.prod(factors, axis=1)
-    weights = jnp.where(selected, weights, 0.0)
+    right = jnp.clip(jnp.searchsorted(nodes, x, side="right"), 1, nodes.shape[0] - 1)
+    left = right - 1
+    x_left = nodes[left]
+    x_right = nodes[right]
+    t = jnp.clip((x - x_left) / jnp.maximum(x_right - x_left, 1.0e-30), 0.0, 1.0)
+    weights = jnp.zeros_like(nodes)
+    weights = weights.at[left].set(1.0 - t)
+    weights = weights.at[right].add(t)
     return jnp.where(diff[nearest] < 1.0e-7, exact, weights)
 
 
@@ -361,9 +362,9 @@ def _interpolation_weights(table: YukawaExponentialM2LTable, displacement: jax.A
     first_transverse = displacement[other_axes[0]]
     second_transverse = displacement[other_axes[1]]
 
-    main_weights = _local_polynomial_weights_1d(main_coord, main_values)
-    first_weights = _local_polynomial_weights_1d(first_transverse, transverse_values)
-    second_weights = _local_polynomial_weights_1d(second_transverse, transverse_values)
+    main_weights = _local_linear_weights_1d(main_coord, main_values)
+    first_weights = _local_linear_weights_1d(first_transverse, transverse_values)
+    second_weights = _local_linear_weights_1d(second_transverse, transverse_values)
     return (
         main_weights[:, None, None]
         * first_weights[None, :, None]
@@ -385,7 +386,8 @@ def apply_exponential_m2l_table(
     weights = _interpolation_weights(table, displacement)
     expanded_weights = jnp.repeat(weights.astype(table.m2e.dtype), n_coeff)
     modes = table.m2e @ source_moments
-    return table.e2l @ (expanded_weights * modes)
+    normalized = table.e2l @ (expanded_weights * modes)
+    return _yukawa_radial_scale(displacement, table.kappa_h).astype(table.m2e.dtype) * normalized
 
 
 def exponential_m2l_operator_from_table(
@@ -404,15 +406,18 @@ def validate_yukawa_m2l_exponential_table_arrays(
     m2e: np.ndarray,
     e2l: np.ndarray,
     reference_operators: np.ndarray,
+    operator_scales: np.ndarray | None = None,
 ) -> dict[str, Any]:
     n_nodes = int(nodes.shape[0])
     n_coeff = int(reference_operators.shape[-1])
+    if operator_scales is None:
+        operator_scales = np.ones((n_nodes,), dtype=np.float32)
     errors = []
     for idx in range(n_nodes):
         weights = np.zeros((n_nodes,), dtype=np.complex64)
         weights[idx] = 1.0 + 0.0j
         weighted_m2e = m2e * np.repeat(weights, n_coeff)[:, None]
-        approx = e2l @ weighted_m2e
+        approx = operator_scales[idx] * (e2l @ weighted_m2e)
         ref = reference_operators[idx]
         denom = max(float(np.linalg.norm(ref)), 1.0e-30)
         errors.append(float(np.linalg.norm(approx - ref) / denom))
@@ -440,11 +445,13 @@ def validate_yukawa_m2l_exponential_table(
     reference = np.asarray(
         [_m2l_operator_for_displacement(np.asarray(node), table.kappa_h, table.order) for node in table.nodes]
     )
+    scales = np.asarray([float(_yukawa_radial_scale(node, table.kappa_h)) for node in table.nodes], dtype=np.float32)
     validation = validate_yukawa_m2l_exponential_table_arrays(
         np.asarray(table.nodes),
         np.asarray(table.m2e),
         np.asarray(table.e2l),
         reference,
+        scales,
     )
     if not include_off_node:
         return validation
