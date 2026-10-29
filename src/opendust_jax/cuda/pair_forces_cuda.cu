@@ -178,9 +178,9 @@ ffi::Error SoftenedYukawaHost(
       force_dims[1] != 3) {
     return ffi::Error::InvalidArgument("forces must have shape (N, 3)");
   }
-  if (!prefactor.dimensions().empty() ||
-      !screening_length.dimensions().empty() ||
-      !softening.dimensions().empty()) {
+  if (prefactor.dimensions().size() != 0 ||
+      screening_length.dimensions().size() != 0 ||
+      softening.dimensions().size() != 0) {
     return ffi::Error::InvalidArgument("force parameters must be scalars");
   }
 
