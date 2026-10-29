@@ -39,6 +39,10 @@ from opendust_jax.pair_forces import (
     softened_yukawa_forces,
     softened_yukawa_forces_2d,
 )
+from opendust_jax.cuda_pair_forces import (
+    cuda_pair_forces_library_path,
+    softened_yukawa_forces_cuda,
+)
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=10)
     parser.add_argument("--device-index", default="0")
+    parser.add_argument(
+        "--cuda-backend",
+        action="store_true",
+        help=(
+            "Also benchmark the optional triangular warp-tiled CUDA FFI backend. "
+            "Build it first with performance/JAX/build_cuda_pair_forces.py."
+        ),
+    )
     parser.add_argument(
         "--output-directory",
         type=Path,
@@ -226,11 +238,19 @@ def jax_force_call(
     softening: float,
     block_size: int,
     source_block_size: int | None = None,
+    implementation: str = "jax-1d",
 ) -> np.ndarray:
     # device_put plus np.asarray makes both transfer directions part of the
     # timed end-to-end call. np.asarray also provides explicit synchronization.
     device_positions = jax.device_put(positions)
-    if source_block_size is None:
+    if implementation == "jax-cuda":
+        forces = softened_yukawa_forces_cuda(
+            device_positions,
+            prefactor,
+            screening_length,
+            softening,
+        )
+    elif implementation == "jax-1d":
         forces = softened_yukawa_forces(
             device_positions,
             prefactor,
@@ -238,7 +258,9 @@ def jax_force_call(
             softening,
             block_size=block_size,
         )
-    else:
+    elif implementation == "jax-2d":
+        if source_block_size is None:
+            raise ValueError("jax-2d requires source_block_size")
         forces = softened_yukawa_forces_2d(
             device_positions,
             prefactor,
@@ -247,6 +269,8 @@ def jax_force_call(
             target_block_size=block_size,
             source_block_size=source_block_size,
         )
+    else:
+        raise ValueError(f"unknown JAX implementation: {implementation}")
     forces.block_until_ready()
     return np.asarray(forces)
 
@@ -285,6 +309,7 @@ def validate_against_openmm(
     softening: float,
     block_size: int = 128,
     source_block_size: int | None = None,
+    implementation: str = "jax-1d",
 ) -> Validation:
     expected = openmm_force_call(context, positions).astype(np.float64)
     actual = jax_force_call(
@@ -294,6 +319,7 @@ def validate_against_openmm(
         softening=softening,
         block_size=block_size,
         source_block_size=source_block_size,
+        implementation=implementation,
     ).astype(np.float64)
     difference = actual - expected
     expected_norm = np.linalg.norm(expected)
@@ -302,7 +328,7 @@ def validate_against_openmm(
     denominator = np.maximum(np.abs(expected), np.finfo(np.float32).eps)
     max_relative = float(np.max(np.abs(difference) / denominator))
     return Validation(
-        backend="jax-1d" if source_block_size is None else "jax-2d",
+        backend=implementation,
         n_particles=len(positions),
         relative_l2=float(relative_l2),
         max_absolute_error=max_absolute,
@@ -311,7 +337,9 @@ def validate_against_openmm(
     )
 
 
-def environment_info(openmm_platform_name: str) -> dict[str, str]:
+def environment_info(
+    openmm_platform_name: str, *, include_cuda_backend: bool
+) -> dict[str, str]:
     try:
         from jax.extend import backend as jax_backend
 
@@ -334,7 +362,7 @@ def environment_info(openmm_platform_name: str) -> dict[str, str]:
     except (FileNotFoundError, subprocess.SubprocessError):
         smi = "unavailable"
 
-    return {
+    info = {
         "python": platform.python_version(),
         "jax": jax.__version__,
         "jaxlib_xla": jaxlib.__version__,
@@ -344,6 +372,9 @@ def environment_info(openmm_platform_name: str) -> dict[str, str]:
         "openmm_platform": openmm_platform_name,
         "nvidia_smi": smi,
     }
+    if include_cuda_backend:
+        info["opendust_cuda_ffi"] = str(cuda_pair_forces_library_path())
+    return info
 
 
 def write_csv(path: Path, measurements: list[Measurement]) -> None:
@@ -367,7 +398,7 @@ def write_report(
     }
     best_jax: dict[tuple[str, int], Measurement] = {}
     for item in measurements:
-        if item.implementation not in ("jax-1d", "jax-2d"):
+        if not item.implementation.startswith("jax-"):
             continue
         key = (item.implementation, item.n_particles)
         previous = best_jax.get(key)
@@ -421,13 +452,16 @@ def write_report(
             if previous is None
             else f"{jax_item.median_s / previous.median_s:.3f}x"
         )
+        target_block = (
+            "-" if jax_item.block_size is None else str(jax_item.block_size)
+        )
         source_block = (
             "-"
             if jax_item.source_block_size is None
             else str(jax_item.source_block_size)
         )
         lines.append(
-            f"| {n_particles} | {implementation} | {jax_item.block_size} | "
+            f"| {n_particles} | {implementation} | {target_block} | "
             f"{source_block} | {jax_item.median_s:.6f} | "
             f"{openmm_item.median_s:.6f} | {ratio:.3f} | "
             f"{jax_item.ordered_pairs_per_s:.6e} | {growth} |"
@@ -448,10 +482,9 @@ def write_report(
     minimum_ratio = min(ratios)
     maximum_ratio = max(ratios)
     conclusion_parts = [
-        f"The measured JAX/OpenMM time ratio ranges from {minimum_ratio:.3f} to "
-        f"{maximum_ratio:.3f}. No performance pass/fail threshold is applied. "
-        "Use this range and an Nsight profile to decide whether to retain pure "
-        "XLA or next evaluate symmetric tiling and Pallas."
+        f"The best measured JAX backend/OpenMM time ratio ranges from "
+        f"{minimum_ratio:.3f} to {maximum_ratio:.3f}. No performance pass/fail "
+        "threshold is applied."
     ]
     common_counts = [
         n
@@ -468,6 +501,22 @@ def write_report(
             "The best 2D tile is between "
             f"{min(tiling_speedups):.3f}x and {max(tiling_speedups):.3f}x "
             "as fast as the best 1D tile (values below 1 mean a slowdown)."
+        )
+    cuda_counts = [
+        n
+        for n in particle_counts
+        if ("jax-1d", n) in best_jax and ("jax-cuda", n) in best_jax
+    ]
+    if cuda_counts:
+        cuda_speedups = [
+            best_jax[("jax-1d", n)].median_s
+            / best_jax[("jax-cuda", n)].median_s
+            for n in cuda_counts
+        ]
+        conclusion_parts.append(
+            "The triangular CUDA FFI backend is between "
+            f"{min(cuda_speedups):.3f}x and {max(cuda_speedups):.3f}x "
+            "as fast as the best 1D XLA tile."
         )
     conclusion = " ".join(conclusion_parts)
     lines.extend(
@@ -521,7 +570,9 @@ def main() -> None:
             raise SystemExit("The OpenMM CUDA platform is unavailable.")
         openmm_platform_name = "CPU"
 
-    info = environment_info(openmm_platform_name)
+    info = environment_info(
+        openmm_platform_name, include_cuda_backend=args.cuda_backend
+    )
     print("Environment:")
     for key, value in info.items():
         print(f"  {key}: {value}")
@@ -565,6 +616,18 @@ def main() -> None:
                 softening=softening,
                 block_size=args.block_sizes[0],
                 source_block_size=args.source_block_sizes[0],
+                implementation="jax-2d",
+            )
+        )
+    if args.cuda_backend:
+        validations.append(
+            validate_against_openmm(
+                validation_positions,
+                validation_context,
+                prefactor=prefactor,
+                screening_length=screening_length,
+                softening=softening,
+                implementation="jax-cuda",
             )
         )
     del validation_context, validation_integrator
@@ -598,6 +661,40 @@ def main() -> None:
             )
         )
         del context, integrator
+
+        if args.cuda_backend:
+            compile_start = time.perf_counter()
+            jax_force_call(
+                positions,
+                prefactor=prefactor,
+                screening_length=screening_length,
+                softening=softening,
+                block_size=32,
+                implementation="jax-cuda",
+            )
+            compile_s = time.perf_counter() - compile_start
+            cuda_samples, _ = measure(
+                lambda: jax_force_call(
+                    positions,
+                    prefactor=prefactor,
+                    screening_length=screening_length,
+                    softening=softening,
+                    block_size=32,
+                    implementation="jax-cuda",
+                ),
+                args.warmup,
+                args.repeat,
+            )
+            measurements.append(
+                measurement_from_samples(
+                    "jax-cuda",
+                    n_particles,
+                    None,
+                    None,
+                    compile_s,
+                    cuda_samples,
+                )
+            )
 
         for block_size in args.block_sizes:
             compile_start = time.perf_counter()

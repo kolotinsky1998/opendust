@@ -53,3 +53,38 @@ python3 performance/JAX/benchmark_pair_forces.py \
 The CSV identifies the implementations as `jax-1d` and `jax-2d`, and records
 both target and source block sizes. Omitting `--source-block-sizes` preserves
 the original benchmark behavior.
+
+## Warp-tiled CUDA backend through JAX FFI
+
+The optional `jax-cuda` backend evaluates every unordered pair once using
+triangular `32x32` warp tiles. It is a CUDA implementation exposed as a JAX
+operation through XLA FFI; positions and forces remain device arrays and the
+operation can be used inside `jax.jit`.
+
+Build it for a V100 (`sm_70`) in the same environment that contains JAX:
+
+```bash
+python3 performance/JAX/build_cuda_pair_forces.py --cuda-arch 70
+```
+
+The build needs `nvcc` from a CUDA 12 toolkit. On a module-based cluster, load
+the matching CUDA toolkit before building. If the environment only contains
+JAX's CUDA runtime wheels, install `cuda-nvcc` from NVIDIA's conda channel or
+ask the cluster for its CUDA toolkit module. For A100 use `--cuda-arch 80`.
+
+Run the same correctness check and timing comparison for OpenMM, the best
+one-dimensional XLA tile, and the CUDA backend:
+
+```bash
+python3 performance/JAX/benchmark_pair_forces.py \
+  --cuda-backend \
+  --powers 15 16 17 18 \
+  --block-sizes 256 \
+  --warmup 3 \
+  --repeat 10
+```
+
+The CUDA implementation currently accumulates tile results with FP32 atomic
+adds. It does not implement `jax.grad`, `vmap`, multi-GPU sharding, cutoff, or
+neighbor lists. The benchmark validates relative L2 error against OpenMM
+before starting the large runs.

@@ -16,6 +16,10 @@ from opendust_jax.pair_forces import (
     softened_yukawa_forces,
     softened_yukawa_forces_2d,
 )
+from opendust_jax.cuda_pair_forces import (
+    cuda_pair_forces_available,
+    softened_yukawa_forces_cuda,
+)
 from opendust_jax.validation import ValidationMetrics, compute_force_metrics
 from opendust_jax.yukawa_exponential_tables import (
     YukawaExponentialM2LTable,
@@ -49,6 +53,8 @@ __all__ = [
     "sample_uniform_cylinder",
     "softened_yukawa_forces",
     "softened_yukawa_forces_2d",
+    "softened_yukawa_forces_cuda",
+    "cuda_pair_forces_available",
     "exponential_m2l_operator_from_table",
     "validate_yukawa_m2l_exponential_table",
     "yukawa_fmm_field",
