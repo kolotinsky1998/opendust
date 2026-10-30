@@ -46,6 +46,8 @@ def main() -> None:
     args = parser.parse_args()
     if jax.default_backend() != "gpu":
         raise SystemExit("This benchmark requires the JAX CUDA backend")
+    if args.warmup < 1:
+        raise SystemExit("--warmup must be at least 1 to exclude JIT compilation")
 
     plasma = MaxwellianPlasmaSI(
         ion_temperature_K=290.11,
@@ -55,7 +57,10 @@ def main() -> None:
         ion_mass_kg=6.6335209e-26,
     )
     rows: list[dict] = []
-    print("implementation\tN\tsteps\tmedian_s\tmin_s\tp90_s\tseconds/step")
+    print(
+        "implementation\tN\tsteps\tcompile_warmup_s\tmedian_s\tmin_s\t"
+        "p90_s\tseconds/step"
+    )
     for power in args.powers:
         count = 2**power
         screening = plasma.screening_length_m
@@ -82,9 +87,13 @@ def main() -> None:
             background=PolynomialBackgroundConfig(enabled=False),
         )
         state = engine.initial_state()
+        state.positions_m.block_until_ready()
+        warmup_timings = []
         for _ in range(args.warmup):
+            warmup_start = time.perf_counter()
             warmed = engine.run(state).final_state
             warmed.positions_m.block_until_ready()
+            warmup_timings.append(time.perf_counter() - warmup_start)
         timings = []
         for _ in range(args.repeat):
             start = time.perf_counter()
@@ -95,6 +104,7 @@ def main() -> None:
             "implementation": "opendust-jax-cuda",
             "N": count,
             "steps": args.steps,
+            "compile_warmup_s": warmup_timings[0],
             "median_s": statistics.median(timings),
             "min_s": min(timings),
             "p90_s": percentile(timings, 90),
@@ -102,7 +112,8 @@ def main() -> None:
         row["seconds_per_step"] = row["median_s"] / args.steps
         rows.append(row)
         print(
-            f"opendust-jax-cuda\t{count}\t{args.steps}\t{row['median_s']:.6f}\t"
+            f"opendust-jax-cuda\t{count}\t{args.steps}\t"
+            f"{row['compile_warmup_s']:.6f}\t{row['median_s']:.6f}\t"
             f"{row['min_s']:.6f}\t{row['p90_s']:.6f}\t{row['seconds_per_step']:.6e}"
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)

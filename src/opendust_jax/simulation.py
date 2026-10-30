@@ -205,6 +205,10 @@ class OpenDustJAX:
             )
         else:
             self._x_axis = self._z_axis = jnp.zeros((0,), jnp.float32)
+        # Keep compiled scan executables across run() calls.  Besides avoiding
+        # needless recompilation in repeated production runs, this makes a
+        # benchmark warm-up actually exclude JIT compilation from timing.
+        self._compiled_chunks: dict[int, object] = {}
 
     def _initial_arrays(self) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(self.simulation.seed)
@@ -563,14 +567,13 @@ class OpenDustJAX:
         trajectory_steps: list[int] = []
         trajectory_positions: list[np.ndarray] = []
         completed = 0
-        compiled_chunks: dict[int, object] = {}
         while completed < self.simulation.steps:
             chunk = min(base_chunk, self.simulation.steps - completed)
-            if chunk not in compiled_chunks:
+            if chunk not in self._compiled_chunks:
                 def run_chunk(value, *, _length=chunk):
                     return jax.lax.scan(self._step, value, xs=None, length=_length)
-                compiled_chunks[chunk] = jax.jit(run_chunk)
-            carry, chunk_history = compiled_chunks[chunk](carry)
+                self._compiled_chunks[chunk] = jax.jit(run_chunk)
+            carry, chunk_history = self._compiled_chunks[chunk](carry)
             host_history = tuple(np.asarray(x) for x in jax.device_get(chunk_history))
             histories.append(host_history)
             completed += chunk
