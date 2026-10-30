@@ -1,6 +1,9 @@
 import numpy as np
 from numpy import random
-import cupy as cp
+try:
+    import cupy as cp
+except ModuleNotFoundError:  # Optional when background coefficients are supplied.
+    cp = None
 from unyt import nm
 from unyt import ps
 from unyt import m
@@ -378,7 +381,8 @@ class OpenDust:
 
         if randomSeed is not None:
             random.seed(int(randomSeed))
-            cp.random.seed(int(randomSeed))
+            if cp is not None:
+                cp.random.seed(int(randomSeed))
 
         position = []
         velocity = []
@@ -511,6 +515,11 @@ class OpenDust:
 
         def computeAndFitBackgroundPotential(R, H, r_D_e, N_s):
             """Approximation of ion background potential with 8th degree even polinomial"""
+            if cp is None:
+                raise RuntimeError(
+                    "CuPy is required to fit the legacy background. Install CuPy "
+                    "or pass precomputed backgroundCoefficients to simulate()."
+                )
             R = R / r_D_e
             H = H / r_D_e
             N_R = int(R * 10)
