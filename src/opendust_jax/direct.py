@@ -43,7 +43,10 @@ def _direct_coulomb_field_batched(
     batch_starts = jnp.arange(n_batches) * batch_size
 
     def batch_field(start: jax.Array) -> jax.Array:
-        eval_positions = jax.lax.dynamic_slice(padded_positions, (start, 0), (batch_size, 3))
+        zero = jnp.asarray(0, dtype=start.dtype)
+        eval_positions = jax.lax.dynamic_slice(
+            padded_positions, (start, zero), (batch_size, 3)
+        )
         diff = eval_positions[:, None, :] - positions[None, :, :]
         r = jnp.linalg.norm(diff, axis=-1)
         inv_r3 = jnp.where(r == 0.0, 0.0, 1.0 / (r**3))
@@ -51,7 +54,10 @@ def _direct_coulomb_field_batched(
 
     def scan_body(field_buffer: jax.Array, start: jax.Array) -> tuple[jax.Array, None]:
         field_chunk = batch_field(start)
-        field_buffer = jax.lax.dynamic_update_slice(field_buffer, field_chunk, (start, 0))
+        zero = jnp.asarray(0, dtype=start.dtype)
+        field_buffer = jax.lax.dynamic_update_slice(
+            field_buffer, field_chunk, (start, zero)
+        )
         return field_buffer, None
 
     field_dtype = jnp.result_type(positions, charges, jnp.asarray(eps0))
@@ -120,7 +126,10 @@ def _direct_yukawa_field_batched(
     batch_starts = jnp.arange(n_batches) * batch_size
 
     def batch_field(start: jax.Array) -> jax.Array:
-        eval_positions = jax.lax.dynamic_slice(padded_positions, (start, 0), (batch_size, 3))
+        zero = jnp.asarray(0, dtype=start.dtype)
+        eval_positions = jax.lax.dynamic_slice(
+            padded_positions, (start, zero), (batch_size, 3)
+        )
         diff = eval_positions[:, None, :] - positions[None, :, :]
         r = jnp.linalg.norm(diff, axis=-1)
         inv_r = jnp.where(r == 0.0, 0.0, 1.0 / r)
@@ -130,7 +139,10 @@ def _direct_yukawa_field_batched(
 
     def scan_body(field_buffer: jax.Array, start: jax.Array) -> tuple[jax.Array, None]:
         field_chunk = batch_field(start)
-        field_buffer = jax.lax.dynamic_update_slice(field_buffer, field_chunk, (start, 0))
+        zero = jnp.asarray(0, dtype=start.dtype)
+        field_buffer = jax.lax.dynamic_update_slice(
+            field_buffer, field_chunk, (start, zero)
+        )
         return field_buffer, None
 
     field_dtype = jnp.result_type(positions, charges, jnp.asarray(kappa), jnp.asarray(eps0))

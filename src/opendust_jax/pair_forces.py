@@ -30,8 +30,9 @@ def _softened_yukawa_forces_tiled(
     inverse_screening_length = jnp.reciprocal(screening_length)
 
     def evaluate_block(start: jax.Array) -> jax.Array:
+        zero = jnp.asarray(0, dtype=start.dtype)
         targets = jax.lax.dynamic_slice(
-            padded_positions, (start, 0), (block_size, 3)
+            padded_positions, (start, zero), (block_size, 3)
         )
         target_indices = start + target_offsets
         pair_is_valid = (target_indices < n_particles) & (
@@ -64,8 +65,9 @@ def _softened_yukawa_forces_tiled(
         force_buffer: jax.Array, start: jax.Array
     ) -> tuple[jax.Array, None]:
         block_forces = evaluate_block(start)
+        zero = jnp.asarray(0, dtype=start.dtype)
         force_buffer = jax.lax.dynamic_update_slice(
-            force_buffer, block_forces, (start, 0)
+            force_buffer, block_forces, (start, zero)
         )
         return force_buffer, None
 
@@ -115,9 +117,10 @@ def _softened_yukawa_forces_2d_tiled(
     inverse_screening_length = jnp.reciprocal(screening_length)
 
     def evaluate_target_block(target_start: jax.Array) -> jax.Array:
+        zero = jnp.asarray(0, dtype=target_start.dtype)
         targets = jax.lax.dynamic_slice(
             target_positions,
-            (target_start, 0),
+            (target_start, zero),
             (target_block_size, 3),
         )
         target_indices = target_start + target_offsets
@@ -130,9 +133,10 @@ def _softened_yukawa_forces_2d_tiled(
             source_block: int, accumulated: jax.Array
         ) -> jax.Array:
             source_start = source_block * source_block_size
+            zero = jnp.asarray(0, dtype=source_start.dtype)
             sources = jax.lax.dynamic_slice(
                 source_positions,
-                (source_start, 0),
+                (source_start, zero),
                 (source_block_size, 3),
             )
             source_indices = source_start + source_offsets
@@ -186,8 +190,9 @@ def _softened_yukawa_forces_2d_tiled(
         force_buffer: jax.Array, target_start: jax.Array
     ) -> tuple[jax.Array, None]:
         block_forces = evaluate_target_block(target_start)
+        zero = jnp.asarray(0, dtype=target_start.dtype)
         force_buffer = jax.lax.dynamic_update_slice(
-            force_buffer, block_forces, (target_start, 0)
+            force_buffer, block_forces, (target_start, zero)
         )
         return force_buffer, None
 

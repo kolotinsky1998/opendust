@@ -39,8 +39,18 @@ def plane_potential_snapshot_V(
 ) -> jax.Array:
     """Sum ion Yukawa potentials on y=0 without a full grid-by-ion array."""
     positions = jnp.asarray(positions_m, dtype=jnp.float32)
+    x_axis_m = jnp.asarray(x_axis_m, dtype=jnp.float32)
+    z_axis_m = jnp.asarray(z_axis_m, dtype=jnp.float32)
+    superion_charge_C = jnp.asarray(superion_charge_C, dtype=jnp.float32)
+    screening_length_m = jnp.asarray(screening_length_m, dtype=jnp.float32)
+    softening_m = jnp.asarray(softening_m, dtype=jnp.float32)
+    background_coefficients = jnp.asarray(
+        background_coefficients, dtype=jnp.float32
+    )
     xx, zz = jnp.meshgrid(x_axis_m, z_axis_m, indexing="xy")
-    targets = jnp.stack((xx.ravel(), jnp.zeros(xx.size), zz.ravel()), axis=1)
+    targets = jnp.stack(
+        (xx.ravel(), jnp.zeros(xx.size, dtype=jnp.float32), zz.ravel()), axis=1
+    )
     n_sources = positions.shape[0]
     n_targets = targets.shape[0]
     source_blocks = (n_sources + source_block_size - 1) // source_block_size
@@ -54,22 +64,37 @@ def plane_potential_snapshot_V(
 
     def target_body(target_index: int, output: jax.Array) -> jax.Array:
         target_start = target_index * target_block_size
+        target_zero = jnp.asarray(0, dtype=target_start.dtype)
         target = jax.lax.dynamic_slice(
-            padded_targets, (target_start, 0), (target_block_size, 3)
+            padded_targets, (target_start, target_zero), (target_block_size, 3)
         )
 
         def source_body(source_index: int, partial: jax.Array) -> jax.Array:
             source_start = source_index * source_block_size
+            source_zero = jnp.asarray(0, dtype=source_start.dtype)
             source = jax.lax.dynamic_slice(
-                padded_sources, (source_start, 0), (source_block_size, 3)
+                padded_sources,
+                (source_start, source_zero),
+                (source_block_size, 3),
             )
-            valid = source_start + jnp.arange(source_block_size) < n_sources
+            valid = (
+                source_start
+                + jnp.arange(source_block_size, dtype=source_start.dtype)
+                < n_sources
+            )
             displacement = target[:, None, :] - source[None, :, :]
             distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
             contribution = jnp.exp(-distance / screening_length_m) / (
                 distance + softening_m
             )
-            return partial + jnp.sum(jnp.where(valid[None, :], contribution, 0.0), axis=1)
+            return partial + jnp.sum(
+                jnp.where(
+                    valid[None, :],
+                    contribution,
+                    jnp.asarray(0.0, dtype=jnp.float32),
+                ),
+                axis=1,
+            )
 
         values = jax.lax.fori_loop(
             0, source_blocks, source_body, jnp.zeros(target_block_size, jnp.float32)
@@ -82,14 +107,20 @@ def plane_potential_snapshot_V(
         target_body,
         jnp.zeros(target_blocks * target_block_size, jnp.float32),
     )[:n_targets]
-    ion_potential = COULOMB_CONSTANT * superion_charge_C * ion_sum
+    ion_potential = (
+        jnp.asarray(COULOMB_CONSTANT, dtype=jnp.float32)
+        * superion_charge_C
+        * ion_sum
+    )
     background = background_potential_V(
         targets,
         background_coefficients,
         screening_length_m,
         superion_charge_C,
     )
-    return (ion_potential + background).reshape((z_axis_m.size, x_axis_m.size))
+    return (ion_potential + background.astype(jnp.float32)).reshape(
+        (z_axis_m.size, x_axis_m.size)
+    )
 
 
 def plane_cic_density_snapshot_m3(
@@ -101,6 +132,9 @@ def plane_cic_density_snapshot_m3(
 ) -> jax.Array:
     """Deposit a y-slab onto x-z nodes with cloud-in-cell interpolation."""
     positions = jnp.asarray(positions_m, dtype=jnp.float32)
+    x_axis_m = jnp.asarray(x_axis_m, dtype=jnp.float32)
+    z_axis_m = jnp.asarray(z_axis_m, dtype=jnp.float32)
+    slice_thickness_m = jnp.asarray(slice_thickness_m, dtype=jnp.float32)
     nx, nz = x_axis_m.size, z_axis_m.size
     dx = x_axis_m[1] - x_axis_m[0]
     dz = z_axis_m[1] - z_axis_m[0]
