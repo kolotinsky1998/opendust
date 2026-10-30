@@ -88,3 +88,25 @@ The CUDA implementation currently accumulates tile results with FP32 atomic
 adds. It does not implement `jax.grad`, `vmap`, multi-GPU sharding, cutoff, or
 neighbor lists. The benchmark validates relative L2 error against OpenMM
 before starting the large runs.
+
+The same shared library now also contains the fused non-pair kernel used by
+`OpenDustJAX`: bare ion<-dust Coulomb forces, the polynomial confining field,
+the homogeneous driving field, and screened dust<-ion orbit-force reductions.
+Rebuild the library after pulling these changes; an older `.so` does not export
+the additional FFI target.
+
+## Complete simulation benchmark
+
+After building the CUDA library, benchmark complete integration steps with:
+
+```bash
+python3 performance/JAX/benchmark_simulation.py \
+  --powers 15 16 17 18 --steps 100 --chunk-size 100 \
+  --warmup 1 --repeat 5
+```
+
+The result is saved to `performance/JAX/results/simulation_results.csv`.
+Compilation and initialization occur during the warmup and are excluded from
+the measured repetitions. The existing pair-force benchmark remains the
+like-for-like OpenMM comparison; the full benchmark measures the additional
+integration, boundary, charging, and dust-force overhead.

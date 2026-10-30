@@ -18,8 +18,29 @@ from opendust_jax.pair_forces import (
 )
 from opendust_jax.cuda_pair_forces import (
     cuda_pair_forces_available,
+    external_forces_cuda,
     softened_yukawa_forces_cuda,
+    softened_yukawa_forces_cuda_with_stats,
 )
+from opendust_jax.background import PolynomialBackground, build_polynomial_background
+from opendust_jax.checkpoint import load_checkpoint, save_checkpoint
+from opendust_jax.collisions import CollisionModel, LegacyChargeExchangeCollision
+from opendust_jax.diagnostics import (
+    plane_cic_density_snapshot_m3,
+    plane_potential_snapshot_V,
+)
+from opendust_jax.models import (
+    DustParticleSI,
+    FieldDrivenPlasmaSI,
+    MaxwellianPlasmaSI,
+    OutputConfig,
+    PlaneDiagnosticConfig,
+    PolynomialBackgroundConfig,
+    SimulationConfigSI,
+    SimulationResult,
+    SimulationState,
+)
+from opendust_jax.simulation import OpenDustJAX
 from opendust_jax.validation import ValidationMetrics, compute_force_metrics
 from opendust_jax.yukawa_exponential_tables import (
     YukawaExponentialM2LTable,
@@ -36,6 +57,19 @@ from opendust_jax.yukawa_fmm import (
 
 __all__ = [
     "CylinderDomain",
+    "CollisionModel",
+    "DustParticleSI",
+    "FieldDrivenPlasmaSI",
+    "LegacyChargeExchangeCollision",
+    "MaxwellianPlasmaSI",
+    "OpenDustJAX",
+    "OutputConfig",
+    "PlaneDiagnosticConfig",
+    "PolynomialBackground",
+    "PolynomialBackgroundConfig",
+    "SimulationConfigSI",
+    "SimulationResult",
+    "SimulationState",
     "ValidationMetrics",
     "YukawaExponentialM2LTable",
     "apply_exponential_m2l_table",
@@ -55,6 +89,13 @@ __all__ = [
     "softened_yukawa_forces_2d",
     "softened_yukawa_forces_cuda",
     "cuda_pair_forces_available",
+    "external_forces_cuda",
+    "build_polynomial_background",
+    "load_checkpoint",
+    "plane_cic_density_snapshot_m3",
+    "plane_potential_snapshot_V",
+    "save_checkpoint",
+    "softened_yukawa_forces_cuda_with_stats",
     "exponential_m2l_operator_from_table",
     "validate_yukawa_m2l_exponential_table",
     "yukawa_fmm_field",

@@ -40,6 +40,56 @@ Kolotinskii D., Timofeev A. OpenDust: A fast GPU-accelerated code for the calcul
 
 If you have any questions, comments or offers related to the OpenDust package or the base article do not to hesitate to contact me!
 
+## Experimental JAX/CUDA implementation
+
+`opendust_jax.OpenDustJAX` is an independent SI-only implementation for one
+NVIDIA GPU. It retains Piel's asymmetric ion-dust model and uses the custom
+triangular CUDA pair kernel through JAX XLA FFI. Build the native library first:
+
+```bash
+python3 performance/JAX/build_cuda_pair_forces.py --cuda-arch 70  # V100
+```
+
+Minimal fixed-charge simulation:
+
+```python
+from opendust_jax import (
+    DustParticleSI, MaxwellianPlasmaSI, OpenDustJAX,
+    PolynomialBackgroundConfig, SimulationConfigSI,
+)
+
+plasma = MaxwellianPlasmaSI(
+    ion_temperature_K=290.11,
+    electron_temperature_K=29011.0,
+    density_m3=1.0e14,
+    mach=1.0,
+    ion_mass_kg=6.6335209e-26,
+)
+lambda_e = plasma.screening_length_m
+simulation = SimulationConfigSI(
+    radius_m=3 * lambda_e,
+    height_m=6 * lambda_e,
+    particle_count=2**16,
+    steps=3000,
+    dt_s=3.5148e-10,
+)
+dust = DustParticleSI(
+    position_m=(0.0, 0.0, -lambda_e),
+    radius_m=58.8e-6,
+    initial_charge_C=-392500 * 1.602176634e-19,
+)
+result = OpenDustJAX(
+    plasma,
+    simulation,
+    [dust],
+    background=PolynomialBackgroundConfig(cache_dir=".opendust_cache"),
+).run()
+```
+
+All public inputs and results use metres, seconds, kilograms, coulombs, volts,
+and newtons. See `performance/JAX/README.md` for CUDA build and benchmark
+commands.
+
 Email: kolotinskiy.da@phystech.edu
 
 Research Gate: https://www.researchgate.net/profile/Daniil_Kolotinskii

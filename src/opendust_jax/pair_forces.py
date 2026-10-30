@@ -40,6 +40,7 @@ def _softened_yukawa_forces_tiled(
 
         displacement = targets[:, None, :] - positions[None, :, :]
         distance_squared = jnp.sum(displacement * displacement, axis=-1)
+        pair_is_valid = pair_is_valid & (distance_squared > 0.0)
 
         # Self and padded pairs use a finite dummy distance. Masking only after
         # division would allow NaNs to enter the compiled computation.
@@ -145,6 +146,7 @@ def _softened_yukawa_forces_2d_tiled(
             dy = target_y - sources[None, :, 1]
             dz = target_z - sources[None, :, 2]
             distance_squared = dx * dx + dy * dy + dz * dz
+            pair_is_valid = pair_is_valid & (distance_squared > 0.0)
             safe_distance_squared = jnp.where(
                 pair_is_valid, distance_squared, 1.0
             )

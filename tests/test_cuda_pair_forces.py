@@ -14,8 +14,11 @@ if str(SRC_DIR) not in sys.path:
 
 from opendust_jax.cuda_pair_forces import (
     cuda_pair_forces_available,
+    external_forces_cuda,
     softened_yukawa_forces_cuda,
+    softened_yukawa_forces_cuda_with_stats,
 )
+from opendust_jax.external_forces import external_forces_jax
 
 
 def numpy_reference(positions, prefactor, screening_length, softening):
@@ -75,4 +78,42 @@ def test_cuda_single_particle_is_zero():
     )
     np.testing.assert_array_equal(
         np.asarray(actual), np.zeros((1, 3), dtype=np.float32)
+    )
+
+
+@pytest.mark.skipif(
+    not cuda_pair_forces_available(),
+    reason="CUDA FFI pair-force library is not built on a JAX GPU host",
+)
+def test_cuda_coincident_distinct_particles_are_finite_and_counted():
+    positions = jnp.zeros((2, 3), dtype=jnp.float32)
+    forces, count = softened_yukawa_forces_cuda_with_stats(
+        positions, 1.0, 1.0, 1.0e-3
+    )
+    np.testing.assert_array_equal(np.asarray(forces), np.zeros((2, 3), np.float32))
+    assert int(count) == 1
+
+
+@pytest.mark.skipif(
+    not cuda_pair_forces_available(),
+    reason="CUDA FFI force library is not built on a JAX GPU host",
+)
+def test_fused_external_cuda_matches_jax_reference():
+    rng = np.random.default_rng(91)
+    positions = jnp.asarray(rng.normal(size=(67, 3)), jnp.float32)
+    dust_positions = jnp.asarray([[0.2, -0.1, 0.3], [-0.4, 0.2, -0.5]], jnp.float32)
+    dust_charges = jnp.asarray([-0.7, -1.1], jnp.float32)
+    coefficients = jnp.asarray(rng.normal(scale=1e-4, size=15), jnp.float32)
+    parameters = (1.3, 0.8, 0.25)
+    expected = external_forces_jax(
+        positions, dust_positions, dust_charges, coefficients, *parameters
+    )
+    actual = jax.jit(external_forces_cuda)(
+        positions, dust_positions, dust_charges, coefficients, *parameters
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual[0]), np.asarray(expected[0]), rtol=2e-5, atol=3e-4
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual[1]), np.asarray(expected[1]), rtol=5e-5, atol=3e-4
     )

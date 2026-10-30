@@ -13,7 +13,8 @@ setuptools.setup(
     author_email = "kolotinskiy.da@phystech.edu",
     license = "MIT",
     package_dir={"": "src"},
-    packages=setuptools.find_packages(where="src"),    
+    packages=setuptools.find_packages(where="src"),
+    package_data={"opendust_jax": ["cuda/*.cu", "_cuda/*.so"]},
     version = "1.0.0",
     
     classifiers=[
@@ -23,5 +24,5 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.10",
 )
