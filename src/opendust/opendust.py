@@ -12,6 +12,7 @@ from unyt import amu
 import openmm as mm
 from scipy import special
 import csv
+import time
 from scipy import integrate
 from scipy.interpolate import interp1d
 
@@ -359,13 +360,25 @@ class OpenDust:
             )
             self.dustParticleForceLines.append(_dustParticleForceLine)
 
-    def simulate(self, deviceIndex = "0", cutOff = False, toRestartFileName=""):
+    def simulate(
+        self,
+        deviceIndex="0",
+        cutOff=False,
+        toRestartFileName="",
+        backgroundCoefficients=None,
+        randomSeed=None,
+    ):
         """! Conduct simulation
         @param palatformName    name of the platform used for calculation
         @param restartFileName  name of the restart file to read ion positions and velocities
         """
         
+        simulate_started = time.perf_counter()
         platformName="CUDA"
+
+        if randomSeed is not None:
+            random.seed(int(randomSeed))
+            cp.random.seed(int(randomSeed))
 
         position = []
         velocity = []
@@ -547,7 +560,17 @@ class OpenDust:
             alpha = -np.linalg.lstsq(A, B, rcond=None)[0] * N_s
             return alpha
 
-        alphaTrap = computeAndFitBackgroundPotential(self.R, self.H, self.r_D_e, self.N)
+        if backgroundCoefficients is None:
+            alphaTrap = computeAndFitBackgroundPotential(
+                self.R, self.H, self.r_D_e, self.N
+            )
+        else:
+            alphaTrap = np.asarray(backgroundCoefficients, dtype=np.float64)
+            if alphaTrap.shape != (15,) or not np.all(np.isfinite(alphaTrap)):
+                raise ValueError(
+                    "backgroundCoefficients must contain 15 finite values"
+                )
+        self.alphaTrap = np.asarray(alphaTrap, dtype=np.float64)
 
         trapIonForceLine = "{}*({}*r^2+{}*h^2+{}*r^2*h^2+{}*r^4+{}*h^4+{}*r^4*h^2+{}*r^2*h^4+{}*r^6+{}*h^6+{}*r^4*h^4+{}*r^6*h^2+{}*r^2*h^6+{}*r^8+{}*h^8)".format(
             self.q_s
@@ -837,6 +860,8 @@ class OpenDust:
         )
 
         integrator = mm.CustomIntegrator(self.d_t)
+        if randomSeed is not None:
+            integrator.setRandomNumberSeed(int(randomSeed))
         integrator.addPerDofVariable("x_axis", 0.0)
         integrator.addPerDofVariable("y_axis", 0.0)
         integrator.addPerDofVariable("z_axis", 0.0)
@@ -1056,6 +1081,7 @@ class OpenDust:
         nFileOutput = self.outputParameters.nFileOutput
 
         """ Start simulation """
+        integration_started = time.perf_counter()
         for i in range(self.n):
 
             integrator.step(1)
@@ -1381,3 +1407,6 @@ class OpenDust:
                     self.dustParticles[p].forceExternalField[i][
                         2
                     ] = _forceExternalFieldZ
+
+        self.integrationTimeSeconds = time.perf_counter() - integration_started
+        self.simulateTimeSeconds = time.perf_counter() - simulate_started

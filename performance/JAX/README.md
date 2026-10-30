@@ -110,3 +110,31 @@ Compilation and initialization occur during the warmup and are excluded from
 the measured repetitions. The existing pair-force benchmark remains the
 like-for-like OpenMM comparison; the full benchmark measures the additional
 integration, boundary, charging, and dust-force overhead.
+
+## Piel2017 Figure 1 controlled comparison
+
+The published `Figure1/consistent` case can be run through both the new CUDA
+backend and legacy OpenMM implementation with identical initial ions and an
+identical deterministic polynomial background:
+
+```bash
+env JAX_ENABLE_X64=1 python3 -u \
+  performance/JAX/benchmark_piel2017_figure1_consistent.py \
+  --backend all
+```
+
+Defaults reproduce the example parameters: 65,536 superions, 3,000 steps,
+`dt=3.5148240854e-9 s`, one initially neutral self-consistently charged dust
+particle, and the full legacy-equivalent background source count. For a quick
+pipeline check use `--particles 1024 --steps 20 --average-start-step 1
+--background-samples 4096`; those reduced results are not physically
+representative.
+
+The `all` mode runs preparation, JAX, OpenMM, and comparison in separate
+processes so their GPU contexts do not compete for memory. Results are placed
+under `performance/JAX/results/piel2017_figure1_consistent/`, including raw NPZ
+time series, per-backend timing JSON, `comparison.json`, and `comparison.md`.
+Long-time charge and force means are compared after step 1001. Pointwise
+trajectories are intentionally not treated as an error metric because the two
+engines use different random streams after ion reinjection and the JAX version
+contains the documented charging/indexing corrections.
