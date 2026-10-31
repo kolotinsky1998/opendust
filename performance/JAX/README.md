@@ -2,7 +2,7 @@
 
 This benchmark compares the exact softened-Yukawa pair force implemented in
 JAX/XLA with an isolated OpenMM `CustomNonbondedForce`. It intentionally does
-not include integration, cutoffs, neighbor lists, FMM, collisions, or boundary
+not include integration, cutoffs, neighbor lists, collisions, or boundary
 conditions.
 
 Run it on one NVIDIA A100 from the repository root:
@@ -151,8 +151,7 @@ Run the same JAX/CUDA physical case while accumulating electric potential and
 CIC ion density in the `y=0` plane:
 
 ```bash
-env JAX_ENABLE_X64=1 python3 -u \
-  performance/JAX/run_piel2017_with_plane_diagnostics.py
+python3 -u performance/JAX/run_piel2017_with_plane_diagnostics.py
 ```
 
 The default `121x121` grid covers `x=[-R,R]` and `z=[-H/2,H/2]`. Snapshots are

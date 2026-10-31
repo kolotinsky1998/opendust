@@ -53,7 +53,7 @@ def plot_force_scatter(reference_forces, computed_forces, output_path, title: st
     ax.set_ylim(lo, hi)
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("Direct reference force, N")
-    ax.set_ylabel("FMM force, N")
+    ax.set_ylabel("Computed force, N")
     ax.grid(True, alpha=0.25)
     ax.legend()
     if title:

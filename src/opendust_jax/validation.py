@@ -1,4 +1,4 @@
-"""Validation metrics for comparing direct and FMM force evaluations."""
+"""Validation metrics for comparing force evaluations."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def compute_force_metrics(
     computed_forces: jax.Array,
     relative_floor: float = 1e-30,
 ) -> ValidationMetrics:
-    """Compute scalar diagnostics for FMM forces against direct reference forces."""
+    """Compute scalar diagnostics for computed forces against reference forces."""
 
     reference_forces = jnp.asarray(reference_forces)
     computed_forces = jnp.asarray(computed_forces)

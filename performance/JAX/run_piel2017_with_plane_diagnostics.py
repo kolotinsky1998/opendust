@@ -12,6 +12,11 @@ import time
 import jax
 import numpy as np
 
+# This standalone simulation always uses FP64 temporal accumulators for the
+# averaged diagnostics.  Configure JAX before importing opendust_jax modules or
+# creating any arrays, so callers do not need a separate environment variable.
+jax.config.update("jax_enable_x64", True)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
@@ -66,10 +71,6 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if jax.default_backend() != "gpu":
         raise SystemExit("This simulation requires the JAX CUDA backend")
-    if not jax.config.x64_enabled:
-        raise SystemExit(
-            "Run with JAX_ENABLE_X64=1 so temporal field averages use FP64"
-        )
     if args.particles <= 0 or args.steps <= 0 or args.dt <= 0.0:
         raise SystemExit("particles, steps, and dt must be positive")
     if args.grid_nx < 2 or args.grid_nz < 2:
