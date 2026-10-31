@@ -275,13 +275,21 @@ def run_jax(args: argparse.Namespace) -> None:
 def run_openmm(args: argparse.Namespace) -> None:
     import openmm
 
-    from opendust.opendust import (
-        DustParticle,
-        OpenDust,
-        OutputParameters,
-        PlasmaParametersInSIUnitsMaxwell,
-        SimulationParametersInSIUnits,
-    )
+    try:
+        from opendust.opendust import (
+            DustParticle,
+            OpenDust,
+            OutputParameters,
+            PlasmaParametersInSIUnitsMaxwell,
+            SimulationParametersInSIUnits,
+        )
+    except ModuleNotFoundError as error:
+        if error.name == "unyt":
+            raise SystemExit(
+                "The legacy OpenMM implementation requires 'unyt'. Install it "
+                "in this environment with: conda install -c conda-forge unyt"
+            ) from error
+        raise
 
     paths = common_paths(args)
     shared = np.load(paths["shared"])

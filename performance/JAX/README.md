@@ -117,6 +117,12 @@ The published `Figure1/consistent` case can be run through both the new CUDA
 backend and legacy OpenMM implementation with identical initial ions and an
 identical deterministic polynomial background:
 
+The legacy side additionally requires `unyt` for its OpenMM unit conversions:
+
+```bash
+conda install -c conda-forge unyt
+```
+
 ```bash
 env JAX_ENABLE_X64=1 python3 -u \
   performance/JAX/benchmark_piel2017_figure1_consistent.py \
@@ -138,3 +144,25 @@ Long-time charge and force means are compared after step 1001. Pointwise
 trajectories are intentionally not treated as an error metric because the two
 engines use different random streams after ion reinjection and the JAX version
 contains the documented charging/indexing corrections.
+
+## Piel2017 run with averaged plane diagnostics
+
+Run the same JAX/CUDA physical case while accumulating electric potential and
+CIC ion density in the `y=0` plane:
+
+```bash
+env JAX_ENABLE_X64=1 python3 -u \
+  performance/JAX/run_piel2017_with_plane_diagnostics.py
+```
+
+The default `121x121` grid covers `x=[-R,R]` and `z=[-H/2,H/2]`. Snapshots are
+sampled at steps 1000, 1100, ..., 3000 and averaged on the GPU using FP64
+temporal accumulators. Density uses a slab of thickness `0.2 r_D`. Configure
+these choices with `--grid-nx`, `--grid-nz`, `--diagnostic-start-step`,
+`--diagnostic-interval`, and `--slice-thickness-debye`.
+
+The final averaged arrays and their SI units are written to
+`diagnostic_run/piel2017_plane_fields.npz` and `.json`. The NPZ contains
+`x_m`, `z_m`, `potential_V`, `ion_density_m3`, `sample_count`, `sample_steps`,
+and `sample_times_s`. Dust charge and force histories are saved separately in
+`piel2017_dust_history.npz`.
