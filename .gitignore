@@ -140,3 +140,11 @@ test/
 
 #visual studio code files
 .vscode/
+
+# OpenDust 2023 reproduction outputs and local article copy
+/examples/OpenDust2023/**/results/
+/examples/OpenDust2023/**/slurm-*.out
+/examples/OpenDust2023/**/slurm-*.err
+slurm-odj-fig*.out
+slurm-odj-fig*.err
+1-s2.0-S0010465523000917-main-2.pdf
