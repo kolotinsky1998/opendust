@@ -1,4 +1,4 @@
-#!/bin/bash -l
+#!/bin/bash
 #SBATCH --job-name=odj-fig7
 #SBATCH --account=proj_1827
 #SBATCH --partition=rocky
@@ -10,14 +10,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "${SLURM_SUBMIT_DIR:-$PWD}" rev-parse --show-toplevel)"
+SCRIPT_DIR="$REPO_ROOT/examples/OpenDust2023/Figure7"
 cd "$REPO_ROOT"
-
-module load cuda/12.9
-CONDA_BASE="$(conda info --base)"
-source "$CONDA_BASE/etc/profile.d/conda.sh"
-conda activate opendust-jax
 
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
