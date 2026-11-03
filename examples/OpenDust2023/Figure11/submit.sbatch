@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=odj-fig11
 #SBATCH --account=proj_1827
-#SBATCH --partition=test
-#SBATCH --time=00:30:00
+#SBATCH --partition=rocky
+#SBATCH --time=02:00:00
 #SBATCH --gpus=1
 #SBATCH --array=0-6
 #SBATCH --output=slurm-%x-%A_%a.out
