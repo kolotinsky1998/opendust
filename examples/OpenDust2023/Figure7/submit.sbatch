@@ -10,8 +10,8 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(git -C "${SLURM_SUBMIT_DIR:-$PWD}" rev-parse --show-toplevel)"
-SCRIPT_DIR="$REPO_ROOT/examples/OpenDust2023/Figure7"
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$REPO_ROOT"
 
 export PYTHONUNBUFFERED=1
