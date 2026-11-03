@@ -4,7 +4,6 @@
 #SBATCH --partition=rocky
 #SBATCH --time=1-00:00:00
 #SBATCH --gpus=1
-#SBATCH --mem=32G
 #SBATCH --array=0-12
 #SBATCH --output=slurm-%x-%A_%a.out
 #SBATCH --error=slurm-%x-%A_%a.err
