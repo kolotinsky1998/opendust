@@ -4,7 +4,6 @@
 #SBATCH --partition=test
 #SBATCH --time=00:10:00
 #SBATCH --gpus=1
-#SBATCH --mem=32G
 #SBATCH --output=slurm-%x-%A.out
 #SBATCH --error=slurm-%x-%A.err
 
