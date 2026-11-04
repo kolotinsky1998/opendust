@@ -29,11 +29,18 @@ from opendust_jax.models import (
 from opendust_jax.simulation import OpenDustJAX
 from opendust_jax.presheath import (
     CylindricalSplineBackground,
+    _axisymmetric_node_density,
     cylindrical_cubic_value_and_gradient,
     load_presheath_background,
     save_presheath_background,
     prepare_presheath_background,
 )
+
+
+def _cylindrical_node_volumes(r, z, radius, height):
+    r_edges = np.concatenate(([0.0], 0.5 * (r[1:] + r[:-1]), [radius]))
+    z_edges = np.concatenate(([-0.5 * height], 0.5 * (z[1:] + z[:-1]), [0.5 * height]))
+    return np.pi * np.diff(r_edges**2)[None, :] * np.diff(z_edges)[:, None]
 
 
 def argon_plasma(pressure=0.1):
@@ -150,16 +157,37 @@ def test_presheath_background_round_trip(tmp_path):
     r = np.linspace(0.0, 1.0, 4)
     z = np.linspace(-1.0, 1.0, 5)
     shape = (len(z), len(r))
+    axial_flux = np.arange(np.prod(shape), dtype=float).reshape(shape)
     background = CylindricalSplineBackground(
         r, z, np.ones(shape), np.full(shape, 2.0), np.full(shape, -2.0),
-        "abc123", np.asarray([[1.0, 0.01, 0.02]]), {"case": "test"},
+        "abc123", np.asarray([[1.0, 0.01, 0.02]]), {"case": "test"}, axial_flux,
     )
     npz, json_path = save_presheath_background(background, tmp_path / "case")
     restored = load_presheath_background(npz)
     np.testing.assert_array_equal(restored.potential_V, background.potential_V)
     assert restored.fingerprint == "abc123"
     assert restored.metadata == {"case": "test"}
+    np.testing.assert_array_equal(restored.axial_flux_m2_s, axial_flux)
+    np.testing.assert_array_equal(restored.axial_velocity_m_s, axial_flux)
     assert json_path.is_file()
+
+
+def test_axisymmetric_density_and_flux_preserve_particle_totals():
+    radius, height = 1.0, 2.0
+    r, z = np.linspace(0.0, radius, 6), np.linspace(-1.0, 1.0, 7)
+    positions = np.asarray([[0.1, 0.0, -0.7], [0.3, 0.4, 0.1], [0.8, 0.0, 0.8]])
+    velocities = np.asarray([2.0, 3.0, 5.0])
+    weight = 7.0
+    density = _axisymmetric_node_density(positions, r, z, weight, radius, height)
+    flux = _axisymmetric_node_density(
+        positions, r, z, weight, radius, height, particle_values=velocities
+    )
+    volumes = _cylindrical_node_volumes(r, z, radius, height)
+    assert np.sum(density * volumes) == pytest.approx(len(positions) * weight)
+    assert np.sum(flux * volumes) == pytest.approx(np.sum(velocities) * weight)
+    velocity = np.divide(flux, density, out=np.zeros_like(flux), where=density > 0)
+    expected = np.divide(flux, density, out=np.zeros_like(flux), where=density > 0)
+    np.testing.assert_allclose(velocity[density > 0], expected[density > 0])
 
 
 def test_presheath_production_path_runs_with_matching_background():

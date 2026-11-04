@@ -34,6 +34,19 @@ class CylindricalSplineBackground:
     fingerprint: str
     convergence_history: np.ndarray
     metadata: dict
+    axial_flux_m2_s: np.ndarray | None = None
+
+    @property
+    def axial_velocity_m_s(self) -> np.ndarray:
+        """Cell-averaged axial velocity; old artifacts produce a zero field."""
+        if self.axial_flux_m2_s is None:
+            return np.zeros_like(self.density_m3, dtype=np.float64)
+        return np.divide(
+            self.axial_flux_m2_s,
+            self.density_m3,
+            out=np.zeros_like(self.density_m3, dtype=np.float64),
+            where=self.density_m3 > 0.0,
+        )
 
     def potential_and_gradient(
         self, positions_m: jax.Array
@@ -139,25 +152,36 @@ def save_presheath_background(
     base.parent.mkdir(parents=True, exist_ok=True)
     npz_path = base.with_name(base.name + "_background.npz")
     json_path = base.with_name(base.name + "_background.json")
+    temporary_npz = npz_path.with_name(npz_path.name + ".tmp.npz")
+    temporary_json = json_path.with_name(json_path.name + ".tmp")
+    axial_flux = (
+        np.zeros_like(background.density_m3)
+        if background.axial_flux_m2_s is None
+        else background.axial_flux_m2_s
+    )
     np.savez_compressed(
-        npz_path,
+        temporary_npz,
         r_m=background.r_m,
         z_m=background.z_m,
         density_m3=background.density_m3,
         ion_potential_V=background.ion_potential_V,
         potential_V=background.potential_V,
+        axial_flux_m2_s=axial_flux,
         convergence_history=background.convergence_history,
         fingerprint=np.asarray(background.fingerprint),
         metadata_json=np.asarray(json.dumps(background.metadata, sort_keys=True)),
     )
-    json_path.write_text(
+    temporary_npz.replace(npz_path)
+    temporary_json.write_text(
         json.dumps(
             {
-                "format_version": 1,
+                "format_version": 2,
                 "fingerprint": background.fingerprint,
                 "units": {
                     "r_m": "m", "z_m": "m", "density_m3": "m^-3",
                     "ion_potential_V": "V", "potential_V": "V",
+                    "axial_flux_m2_s": "m^-2 s^-1",
+                    "axial_velocity_m_s": "m s^-1",
                 },
                 **background.metadata,
             },
@@ -166,6 +190,7 @@ def save_presheath_background(
         ),
         encoding="utf-8",
     )
+    temporary_json.replace(json_path)
     return npz_path, json_path
 
 
@@ -176,15 +201,22 @@ def load_presheath_background(path: Path | str) -> CylindricalSplineBackground:
         if candidate.is_file():
             source = candidate
     with np.load(source, allow_pickle=False) as data:
+        density = np.asarray(data["density_m3"], dtype=np.float64)
+        axial_flux = (
+            np.asarray(data["axial_flux_m2_s"], dtype=np.float64)
+            if "axial_flux_m2_s" in data.files
+            else np.zeros_like(density)
+        )
         return CylindricalSplineBackground(
             r_m=np.asarray(data["r_m"], dtype=np.float64),
             z_m=np.asarray(data["z_m"], dtype=np.float64),
-            density_m3=np.asarray(data["density_m3"], dtype=np.float64),
+            density_m3=density,
             ion_potential_V=np.asarray(data["ion_potential_V"], dtype=np.float64),
             potential_V=np.asarray(data["potential_V"], dtype=np.float64),
             fingerprint=str(data["fingerprint"]),
             convergence_history=np.asarray(data["convergence_history"], dtype=np.float64),
             metadata=json.loads(str(data["metadata_json"])),
+            axial_flux_m2_s=axial_flux,
         )
 
 
@@ -238,6 +270,7 @@ def _axisymmetric_node_density(
     superion_weight: float,
     radius_m: float,
     height_m: float,
+    particle_values: np.ndarray | None = None,
 ) -> np.ndarray:
     radial = np.linalg.norm(positions_m[:, :2], axis=1)
     dr, dz = r_m[1] - r_m[0], z_m[1] - z_m[0]
@@ -247,10 +280,11 @@ def _axisymmetric_node_density(
     iz = np.minimum(np.floor(gz).astype(int), len(z_m) - 2)
     tr, tz = gr - ir, gz - iz
     weights = np.zeros((len(z_m), len(r_m)), dtype=np.float64)
-    np.add.at(weights, (iz, ir), (1.0 - tr) * (1.0 - tz))
-    np.add.at(weights, (iz, ir + 1), tr * (1.0 - tz))
-    np.add.at(weights, (iz + 1, ir), (1.0 - tr) * tz)
-    np.add.at(weights, (iz + 1, ir + 1), tr * tz)
+    values = np.ones(len(positions_m)) if particle_values is None else particle_values
+    np.add.at(weights, (iz, ir), values * (1.0 - tr) * (1.0 - tz))
+    np.add.at(weights, (iz, ir + 1), values * tr * (1.0 - tz))
+    np.add.at(weights, (iz + 1, ir), values * (1.0 - tr) * tz)
+    np.add.at(weights, (iz + 1, ir + 1), values * tr * tz)
     r_edges = np.concatenate(([0.0], 0.5 * (r_m[1:] + r_m[:-1]), [radius_m]))
     z_edges = np.concatenate(([-0.5 * height_m], 0.5 * (z_m[1:] + z_m[:-1]), [0.5 * height_m]))
     volumes = (
@@ -329,7 +363,8 @@ def prepare_presheath_background(
             index = jnp.clip(((pos[:, 2] / simulation.height_m + 0.5) * nz_profile).astype(jnp.int32), 0, nz_profile - 1)
             density_sum += jnp.bincount(index, length=nz_profile)
             flux_sum += jnp.bincount(index, weights=vel[:, 2], length=nz_profile)
-            return (pos, vel, random_key, density_sum, flux_sum, out_count + jnp.sum(events.out_of_range)), None
+            out_of_range = jnp.sum(events.out_of_range, dtype=jnp.int32)
+            return (pos, vel, random_key, density_sum, flux_sum, out_count + out_of_range), None
 
         initial = (carry[0], carry[1], carry[2], jnp.zeros(nz_profile), jnp.zeros(nz_profile), jnp.asarray(0, jnp.int32))
         final, _ = jax.lax.scan(one_step, initial, xs=None, length=block_steps)
@@ -392,10 +427,12 @@ def prepare_presheath_background(
     superion_weight = plasma.reference_density_m3 * volume / count
     superion_charge = ELEMENTARY_CHARGE_C * superion_weight
     density_accum = np.zeros((nz, nr), dtype=np.float64)
+    axial_flux_accum = np.zeros((nz, nr), dtype=np.float64)
     potential_accum = np.zeros((nz, nr), dtype=np.float64)
     for _ in range(config.averaging_blocks):
         execute(block_steps)
         host_positions = np.asarray(jax.device_get(positions))
+        host_velocities = np.asarray(jax.device_get(velocities))
         density_accum += _axisymmetric_node_density(
             host_positions,
             r_axis,
@@ -404,8 +441,18 @@ def prepare_presheath_background(
             simulation.radius_m,
             simulation.height_m,
         )
+        axial_flux_accum += _axisymmetric_node_density(
+            host_positions,
+            r_axis,
+            z_axis,
+            superion_weight,
+            simulation.radius_m,
+            simulation.height_m,
+            particle_values=host_velocities[:, 2],
+        )
         potential_accum += _direct_potential(host_positions, r_axis, z_axis, superion_charge, plasma.screening_length_m, softening, config.source_block_size)
     density_mean = density_accum / config.averaging_blocks
+    axial_flux_mean = axial_flux_accum / config.averaging_blocks
     ion_potential = potential_accum / config.averaging_blocks
     metadata = {
         "plasma": asdict(plasma),
@@ -417,14 +464,15 @@ def prepare_presheath_background(
         "boundary_model": "upstream_reinjection_specular_side",
     }
     background = CylindricalSplineBackground(
-        r_axis,
-        z_axis,
-        density_mean,
-        ion_potential,
-        -ion_potential,
-        fingerprint,
-        np.asarray(history, dtype=np.float64),
-        metadata,
+        r_m=r_axis,
+        z_m=z_axis,
+        density_m3=density_mean,
+        ion_potential_V=ion_potential,
+        potential_V=-ion_potential,
+        fingerprint=fingerprint,
+        convergence_history=np.asarray(history, dtype=np.float64),
+        metadata=metadata,
+        axial_flux_m2_s=axial_flux_mean,
     )
     save_presheath_background(background, config.output_prefix)
     return background

@@ -1,0 +1,22 @@
+{
+  "output_dir": "results",
+  "particle_count": 65536,
+  "iterations": 5,
+  "duration_plasma_periods": 83.0,
+  "burn_in_plasma_periods": 16.6,
+  "radius_screening_lengths": 1.25,
+  "height_screening_lengths": 5.0,
+  "force_backend": "cuda",
+  "diagnostic_nx": 81,
+  "diagnostic_nz": 161,
+  "diagnostic_interval": 10,
+  "step_chunk_size": 100,
+  "background_grid_spacing_screening_lengths": 0.1,
+  "background_density_tolerance": 0.02,
+  "background_flux_tolerance": 0.02,
+  "background_consecutive_blocks": 3,
+  "background_minimum_transit_times": 4.0,
+  "background_maximum_transit_times": 100.0,
+  "background_averaging_blocks": 10,
+  "smoke_project_invalid_fields": false
+}

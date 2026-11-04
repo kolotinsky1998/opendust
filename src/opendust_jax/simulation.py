@@ -656,11 +656,16 @@ class OpenDustJAX:
             density_sum,
             sample_count,
             carry.coincident_count + coincident,
-            carry.collision_candidates + jnp.sum(collision_events.candidates),
-            carry.collision_elastic + jnp.sum(collision_events.elastic),
-            carry.collision_charge_exchange + jnp.sum(collision_events.charge_exchange),
-            carry.collision_null + jnp.sum(collision_events.null),
-            carry.collision_out_of_range + jnp.sum(collision_events.out_of_range),
+            carry.collision_candidates
+            + jnp.sum(collision_events.candidates, dtype=jnp.int32),
+            carry.collision_elastic
+            + jnp.sum(collision_events.elastic, dtype=jnp.int32),
+            carry.collision_charge_exchange
+            + jnp.sum(collision_events.charge_exchange, dtype=jnp.int32),
+            carry.collision_null
+            + jnp.sum(collision_events.null, dtype=jnp.int32),
+            carry.collision_out_of_range
+            + jnp.sum(collision_events.out_of_range, dtype=jnp.int32),
         )
 
     def _step(self, carry: _RunCarry, _: None):

@@ -54,11 +54,28 @@ from opendust_jax.presheath import (
 )
 from opendust_jax.simulation import OpenDustJAX
 from opendust_jax.validation import ValidationMetrics, compute_force_metrics
+from opendust_jax.article_reproduction import (
+    ARTICLE_CASES,
+    ARTICLE_DUST_Z_OVER_LAMBDA,
+    ArticleCase,
+    ArticleReproductionConfig,
+    PaperElectricField,
+    article_drift_mach,
+    fit_required_field,
+    normalized_force_imbalance,
+    paper_z_m,
+    required_field_V_m,
+    simulation_z_m,
+)
 
 __all__ = [
     "CylinderDomain",
     "ArgonNullCollisionModel",
     "ArgonPresheathPlasmaSI",
+    "ARTICLE_CASES",
+    "ARTICLE_DUST_Z_OVER_LAMBDA",
+    "ArticleCase",
+    "ArticleReproductionConfig",
     "ChargingSubcyclingConfig",
     "CollisionStatistics",
     "CollisionModel",
@@ -69,6 +86,7 @@ __all__ = [
     "MaxwellianPlasmaSI",
     "OpenDustJAX",
     "OutputConfig",
+    "PaperElectricField",
     "PlaneDiagnosticConfig",
     "PolynomialBackground",
     "PolynomialBackgroundConfig",
@@ -92,14 +110,20 @@ __all__ = [
     "cuda_pair_forces_available",
     "external_forces_cuda",
     "build_polynomial_background",
+    "article_drift_mach",
+    "fit_required_field",
     "load_checkpoint",
     "load_argon_cross_sections",
     "load_presheath_background",
+    "normalized_force_imbalance",
+    "paper_z_m",
     "plane_cic_density_snapshot_m3",
     "plane_potential_snapshot_V",
     "save_checkpoint",
     "prepare_presheath_background",
     "save_presheath_background",
     "recommend_main_timestep",
+    "required_field_V_m",
+    "simulation_z_m",
     "softened_yukawa_forces_cuda_with_stats",
 ]
