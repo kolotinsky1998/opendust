@@ -108,6 +108,31 @@ the stationary density, ion potential, compensating cubic-interpolated
 potential, and convergence history to NPZ/JSON. See
 `examples/NonUniformPresheath` for a complete configuration.
 
+### Charging subcycling
+
+Self-consistent dust charging can use a smaller ion-collection step without
+recomputing the O(N²) ion-ion force or neutral collisions on every substep:
+
+```python
+from opendust_jax import ChargingSubcyclingConfig, recommend_main_timestep
+
+limits = recommend_main_timestep(plasma)
+simulation = SimulationConfigSI(
+    # geometry, particle count, and step count omitted
+    dt_s=limits.recommended_dt_s,
+    charging_subcycling=ChargingSubcyclingConfig(),
+)
+engine = OpenDustJAX(plasma, simulation, dust, background=background)
+print(engine.charging_substeps, engine.charging_dt_s)
+result = engine.run()
+```
+
+The automatic substep count limits the nominal displacement to 10% of the
+smallest self-consistently charged dust radius using
+`abs(flow_speed) + 4 * ion_thermal_speed`. Set `substeps` or
+`velocity_limit_m_s` explicitly when a different bound is required. Output,
+checkpoints, and diagnostic intervals remain indexed by the main step.
+
 Email: kolotinskiy.da@phystech.edu
 
 Research Gate: https://www.researchgate.net/profile/Daniil_Kolotinskii

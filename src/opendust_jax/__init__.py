@@ -31,6 +31,7 @@ from opendust_jax.diagnostics import (
 )
 from opendust_jax.models import (
     ArgonPresheathPlasmaSI,
+    ChargingSubcyclingConfig,
     CollisionStatistics,
     DustParticleSI,
     FieldDrivenPlasmaSI,
@@ -44,6 +45,7 @@ from opendust_jax.models import (
     SimulationResult,
     SimulationState,
 )
+from opendust_jax.timestepping import TimeStepRecommendation, recommend_main_timestep
 from opendust_jax.presheath import (
     CylindricalSplineBackground,
     load_presheath_background,
@@ -57,6 +59,7 @@ __all__ = [
     "CylinderDomain",
     "ArgonNullCollisionModel",
     "ArgonPresheathPlasmaSI",
+    "ChargingSubcyclingConfig",
     "CollisionStatistics",
     "CollisionModel",
     "CylindricalSplineBackground",
@@ -74,6 +77,7 @@ __all__ = [
     "SimulationConfigSI",
     "SimulationResult",
     "SimulationState",
+    "TimeStepRecommendation",
     "ValidationMetrics",
     "compute_force_metrics",
     "direct_coulomb_field",
@@ -96,5 +100,6 @@ __all__ = [
     "save_checkpoint",
     "prepare_presheath_background",
     "save_presheath_background",
+    "recommend_main_timestep",
     "softened_yukawa_forces_cuda_with_stats",
 ]

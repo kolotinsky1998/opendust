@@ -4,6 +4,7 @@ from pathlib import Path
 
 from opendust_jax import (
     ArgonPresheathPlasmaSI,
+    ChargingSubcyclingConfig,
     DustParticleSI,
     OpenDustJAX,
     OutputConfig,
@@ -11,6 +12,7 @@ from opendust_jax import (
     QuadraticElectricFieldSI,
     SimulationConfigSI,
     prepare_presheath_background,
+    recommend_main_timestep,
 )
 
 
@@ -29,11 +31,12 @@ plasma = ArgonPresheathPlasmaSI(
     ),
 )
 lambda_de = plasma.screening_length_m
+time_step = recommend_main_timestep(plasma)
 common = dict(
     radius_m=1.25 * lambda_de,
     height_m=5.0 * lambda_de,
     particle_count=2**16,
-    dt_s=1.0e-10,
+    dt_s=time_step.recommended_dt_s,
     seed=7,
     force_backend="cuda",
     step_chunk_size=100,
@@ -48,18 +51,29 @@ background = prepare_presheath_background(
     ),
 )
 
-production = SimulationConfigSI(steps=10_000, **common)
 dust = DustParticleSI(
     position_m=(0.0, 0.0, -lambda_de),
     radius_m=4.445e-6,
     initial_charge_C=-2.5e-15,
     charge_mode="self_consistent",
 )
-result = OpenDustJAX(
+production = SimulationConfigSI(
+    steps=10_000,
+    charging_subcycling=ChargingSubcyclingConfig(),
+    **common,
+)
+engine = OpenDustJAX(
     plasma,
     production,
     [dust],
     background=background,
     output=OutputConfig(checkpoint_path=HERE / "results" / "restart.npz"),
-).run()
+)
+result = engine.run()
+print(
+    "main dt, charging substeps, charging dt:",
+    production.dt_s,
+    engine.charging_substeps,
+    engine.charging_dt_s,
+)
 print(result.collision_statistics)

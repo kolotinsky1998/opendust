@@ -249,6 +249,24 @@ class PresheathEquilibrationConfig:
 
 
 @dataclass(frozen=True)
+class ChargingSubcyclingConfig:
+    """Resolve ion collection by dust inside one main integration step."""
+
+    substeps: int | None = None
+    max_displacement_fraction: float = 0.1
+    thermal_speed_multiplier: float = 4.0
+    velocity_limit_m_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.substeps is not None and self.substeps <= 0:
+            raise ValueError("substeps must be positive when specified")
+        _positive("max_displacement_fraction", self.max_displacement_fraction)
+        _positive("thermal_speed_multiplier", self.thermal_speed_multiplier)
+        if self.velocity_limit_m_s is not None:
+            _positive("velocity_limit_m_s", self.velocity_limit_m_s)
+
+
+@dataclass(frozen=True)
 class SimulationConfigSI:
     radius_m: float
     height_m: float
@@ -259,6 +277,7 @@ class SimulationConfigSI:
     force_backend: ForceBackend = "cuda"
     step_chunk_size: int = 100
     softening_m: float | None = None
+    charging_subcycling: ChargingSubcyclingConfig | None = None
 
     def __post_init__(self) -> None:
         _positive("radius_m", self.radius_m)
