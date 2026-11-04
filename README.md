@@ -90,6 +90,24 @@ All public inputs and results use metres, seconds, kilograms, coulombs, volts,
 and newtons. See `performance/JAX/README.md` for CUDA build and benchmark
 commands.
 
+### Non-uniform argon presheath
+
+The JAX implementation also provides `ArgonPresheathPlasmaSI` and
+`ArgonNullCollisionModel` for energy-dependent Ar+/Ar elastic and resonant
+charge-exchange collisions using the bundled Phelps cross sections. This mode
+requires an explicitly prepared non-uniform cylindrical background:
+
+```python
+background = prepare_presheath_background(plasma, preparation, equilibration)
+result = OpenDustJAX(plasma, production, dust, background=background).run()
+```
+
+Preparation evolves noninteracting ions with the prescribed axial field and
+collisions until both the axial density and flux profiles converge. It writes
+the stationary density, ion potential, compensating cubic-interpolated
+potential, and convergence history to NPZ/JSON. See
+`examples/NonUniformPresheath` for a complete configuration.
+
 Email: kolotinskiy.da@phystech.edu
 
 Research Gate: https://www.researchgate.net/profile/Daniil_Kolotinskii

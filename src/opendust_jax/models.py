@@ -101,7 +101,151 @@ class FieldDrivenPlasmaSI:
         )
 
 
-PlasmaSI = MaxwellianPlasmaSI | FieldDrivenPlasmaSI
+@dataclass(frozen=True)
+class QuadraticElectricFieldSI:
+    """Axial presheath field, clamped to its active interval."""
+
+    E0_V_m: float
+    alpha_V_m2: float = 0.0
+    beta_V_m3: float = 0.0
+    z_min_m: float | None = None
+    z_max_m: float | None = None
+    enforce_presheath_constraints: bool = True
+
+    def __post_init__(self) -> None:
+        values = (self.E0_V_m, self.alpha_V_m2, self.beta_V_m3)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("electric-field coefficients must be finite")
+        if (self.z_min_m is None) != (self.z_max_m is None):
+            raise ValueError("z_min_m and z_max_m must be specified together")
+        if self.z_min_m is not None:
+            if not math.isfinite(self.z_min_m) or not math.isfinite(self.z_max_m):
+                raise ValueError("electric-field bounds must be finite")
+            if self.z_min_m >= self.z_max_m:
+                raise ValueError("z_min_m must be smaller than z_max_m")
+
+    def value_V_m(self, z_m: float) -> float:
+        z = z_m
+        if self.z_min_m is not None:
+            z = min(max(z, self.z_min_m), self.z_max_m)
+        return self.E0_V_m + self.alpha_V_m2 * z + self.beta_V_m3 * z * z
+
+    def validate_for_domain(
+        self,
+        height_m: float,
+        lowest_dust_z_m: float | None = None,
+    ) -> None:
+        if not self.enforce_presheath_constraints:
+            return
+        z_min = -0.5 * height_m if self.z_min_m is None else self.z_min_m
+        z_max = 0.5 * height_m if self.z_max_m is None else self.z_max_m
+        if z_min < -0.5 * height_m or z_max > 0.5 * height_m:
+            raise ValueError("electric-field active interval must lie inside the domain")
+        beta = self.beta_V_m3
+        if beta > 0.0:
+            raise ValueError("strict presheath validation requires beta_V_m3 <= 0")
+        if beta == 0.0:
+            if self.alpha_V_m2 < 0.0:
+                raise ValueError("strict presheath validation requires a nondecreasing field")
+            return
+        vertex = -self.alpha_V_m2 / (2.0 * beta)
+        midpoint = 0.5 * (z_min + z_max)
+        if vertex <= z_min:
+            raise ValueError("quadratic-field maximum must follow the acceleration boundary")
+        if vertex <= midpoint:
+            raise ValueError("quadratic-field maximum must lie after the active-interval midpoint")
+        if vertex >= z_max:
+            raise ValueError("quadratic-field maximum must lie inside the active interval")
+        if self.value_V_m(z_max) <= self.value_V_m(z_min):
+            raise ValueError("quadratic field must increase across its active interval")
+        if lowest_dust_z_m is not None and vertex <= lowest_dust_z_m:
+            raise ValueError("quadratic-field maximum must lie downstream of the lowest dust")
+
+
+@dataclass(frozen=True)
+class ArgonPresheathPlasmaSI:
+    """Non-uniform Ar+/Ar flow driven through a prescribed axial field."""
+
+    neutral_temperature_K: float
+    electron_temperature_K: float
+    reference_density_m3: float
+    pressure_Pa: float
+    inlet_mach: float
+    electric_field: QuadraticElectricFieldSI
+    ion_mass_kg: float = 6.6335209e-26
+
+    def __post_init__(self) -> None:
+        _positive("neutral_temperature_K", self.neutral_temperature_K)
+        _positive("electron_temperature_K", self.electron_temperature_K)
+        _positive("reference_density_m3", self.reference_density_m3)
+        _positive("pressure_Pa", self.pressure_Pa)
+        _positive("ion_mass_kg", self.ion_mass_kg)
+        if not math.isfinite(self.inlet_mach) or self.inlet_mach <= 0.0:
+            raise ValueError("inlet_mach must be finite and positive (+z flow)")
+
+    @property
+    def density_m3(self) -> float:
+        return self.reference_density_m3
+
+    @property
+    def neutral_density_m3(self) -> float:
+        return self.pressure_Pa / (BOLTZMANN_J_K * self.neutral_temperature_K)
+
+    @property
+    def screening_length_m(self) -> float:
+        return math.sqrt(
+            EPSILON_0_F_M
+            * BOLTZMANN_J_K
+            * self.electron_temperature_K
+            / (ELEMENTARY_CHARGE_C**2 * self.reference_density_m3)
+        )
+
+    @property
+    def ion_thermal_speed_m_s(self) -> float:
+        return math.sqrt(BOLTZMANN_J_K * self.neutral_temperature_K / self.ion_mass_kg)
+
+    @property
+    def flow_speed_m_s(self) -> float:
+        sound_speed = math.sqrt(
+            BOLTZMANN_J_K * self.electron_temperature_K / self.ion_mass_kg
+        )
+        return self.inlet_mach * sound_speed
+
+
+PlasmaSI = MaxwellianPlasmaSI | FieldDrivenPlasmaSI | ArgonPresheathPlasmaSI
+
+
+@dataclass(frozen=True)
+class PresheathEquilibrationConfig:
+    """Controls convergence and cylindrical-grid sampling for background preparation."""
+
+    output_prefix: Path | str
+    grid_spacing_screening_lengths: float = 0.1
+    density_tolerance: float = 0.02
+    flux_tolerance: float = 0.02
+    consecutive_blocks: int = 3
+    minimum_transit_times: float = 4.0
+    block_transit_times: float = 1.0
+    maximum_transit_times: float = 100.0
+    averaging_blocks: int = 10
+    source_block_size: int = 4096
+
+    def __post_init__(self) -> None:
+        for name in (
+            "grid_spacing_screening_lengths",
+            "density_tolerance",
+            "flux_tolerance",
+            "minimum_transit_times",
+            "block_transit_times",
+            "maximum_transit_times",
+        ):
+            _positive(name, getattr(self, name))
+        if self.consecutive_blocks <= 0 or self.averaging_blocks <= 0:
+            raise ValueError("block counts must be positive")
+        if self.source_block_size <= 0:
+            raise ValueError("source_block_size must be positive")
+        if self.maximum_transit_times <= self.minimum_transit_times:
+            raise ValueError("maximum_transit_times must exceed minimum_transit_times")
 
 
 @dataclass(frozen=True)
@@ -227,6 +371,18 @@ class SimulationResult:
     diagnostic_files: tuple[Path, ...] = field(default_factory=tuple)
     trajectory_steps: object | None = None
     trajectory_positions_m: object | None = None
+    collision_statistics: "CollisionStatistics" = field(
+        default_factory=lambda: CollisionStatistics()
+    )
+
+
+@dataclass(frozen=True)
+class CollisionStatistics:
+    candidate_count: int = 0
+    elastic_count: int = 0
+    charge_exchange_count: int = 0
+    null_count: int = 0
+    out_of_range_count: int = 0
 
 
 def validate_system(
@@ -246,6 +402,9 @@ def validate_system(
                 RuntimeWarning,
                 stacklevel=2,
             )
+    elif isinstance(plasma, ArgonPresheathPlasmaSI):
+        lowest = min((dust.position_m[2] for dust in dust_particles), default=None)
+        plasma.electric_field.validate_for_domain(simulation.height_m, lowest)
 
     radius = simulation.radius_m
     half_height = 0.5 * simulation.height_m

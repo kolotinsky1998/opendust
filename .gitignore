@@ -130,6 +130,11 @@ dmypy.json
 
 #data directory
 data/
+!data/
+data/*
+!data/cross_sections/
+data/cross_sections/*
+!data/cross_sections/*.csv
 csv/
 trajectory.xyz
 trajectoryEquilibrate.xyz

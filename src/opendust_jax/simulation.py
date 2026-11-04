@@ -15,7 +15,12 @@ from scipy import special
 
 from opendust_jax.background import PolynomialBackground, build_polynomial_background
 from opendust_jax.checkpoint import load_checkpoint, save_checkpoint
-from opendust_jax.collisions import CollisionModel, LegacyChargeExchangeCollision
+from opendust_jax.collisions import (
+    ArgonNullCollisionModel,
+    CollisionEvents,
+    CollisionModel,
+    LegacyChargeExchangeCollision,
+)
 from opendust_jax.cuda_pair_forces import (
     cuda_pair_forces_available,
     external_forces_cuda,
@@ -29,8 +34,10 @@ from opendust_jax.diagnostics import (
 )
 from opendust_jax.external_forces import external_forces_jax
 from opendust_jax.models import (
+    ArgonPresheathPlasmaSI,
     BOLTZMANN_J_K,
     COULOMB_CONSTANT,
+    CollisionStatistics,
     ELEMENTARY_CHARGE_C,
     DustParticleSI,
     FieldDrivenPlasmaSI,
@@ -44,6 +51,7 @@ from opendust_jax.models import (
     SimulationState,
     validate_system,
 )
+from opendust_jax.presheath import CylindricalSplineBackground
 from opendust_jax.pair_forces import softened_yukawa_forces
 from opendust_jax.physics import (
     background_force_N,
@@ -58,6 +66,11 @@ class _RunCarry(NamedTuple):
     density_sum: jax.Array
     sample_count: jax.Array
     coincident_count: jax.Array
+    collision_candidates: jax.Array
+    collision_elastic: jax.Array
+    collision_charge_exchange: jax.Array
+    collision_null: jax.Array
+    collision_out_of_range: jax.Array
 
 
 def _normal_pdf(values: np.ndarray, mean: float, sigma: float) -> np.ndarray:
@@ -69,7 +82,7 @@ def _normal_pdf(values: np.ndarray, mean: float, sigma: float) -> np.ndarray:
 def _axial_pdf(
     values: np.ndarray, plasma: PlasmaSI, thermal_speed: float, flow_speed: float
 ) -> np.ndarray:
-    if isinstance(plasma, MaxwellianPlasmaSI) or abs(flow_speed) < 1.0e-12 * thermal_speed:
+    if isinstance(plasma, (MaxwellianPlasmaSI, ArgonPresheathPlasmaSI)) or abs(flow_speed) < 1.0e-12 * thermal_speed:
         return _normal_pdf(values, flow_speed, thermal_speed)
     sign = 1.0 if flow_speed >= 0.0 else -1.0
     reflected = sign * values
@@ -142,7 +155,7 @@ class OpenDustJAX:
         simulation: SimulationConfigSI,
         dust_particles: list[DustParticleSI] | tuple[DustParticleSI, ...] = (),
         *,
-        background: PolynomialBackgroundConfig | None = None,
+        background: PolynomialBackgroundConfig | CylindricalSplineBackground | None = None,
         diagnostics: PlaneDiagnosticConfig | None = None,
         output: OutputConfig | None = None,
         collision_model: CollisionModel | None = None,
@@ -150,10 +163,27 @@ class OpenDustJAX:
         self.plasma = plasma
         self.simulation = simulation
         self.dust_particles = tuple(dust_particles)
-        self.background_config = background or PolynomialBackgroundConfig()
+        self.background_config = (
+            background if isinstance(background, PolynomialBackgroundConfig) else None
+        )
         self.diagnostics = diagnostics
         self.output = output or OutputConfig()
-        self.collision_model = collision_model or LegacyChargeExchangeCollision()
+        if isinstance(plasma, ArgonPresheathPlasmaSI):
+            if not isinstance(background, CylindricalSplineBackground):
+                raise ValueError(
+                    "ArgonPresheathPlasmaSI requires an explicitly prepared "
+                    "CylindricalSplineBackground"
+                )
+            self.collision_model = collision_model or ArgonNullCollisionModel(plasma)
+            if not isinstance(self.collision_model, ArgonNullCollisionModel):
+                raise TypeError("Argon presheath requires ArgonNullCollisionModel")
+            self.collision_model.validate_timestep(simulation.dt_s)
+            self.background = background
+            self._validate_presheath_background()
+        else:
+            if isinstance(background, CylindricalSplineBackground):
+                raise TypeError("cylindrical backgrounds require ArgonPresheathPlasmaSI")
+            self.collision_model = collision_model or LegacyChargeExchangeCollision()
         validate_system(plasma, simulation, self.dust_particles, diagnostics)
         if simulation.force_backend == "cuda" and not cuda_pair_forces_available():
             raise RuntimeError(
@@ -178,13 +208,15 @@ class OpenDustJAX:
         self.superion_weight = plasma.density_m3 * volume / simulation.particle_count
         self.superion_charge_C = ELEMENTARY_CHARGE_C * self.superion_weight
         self.superion_mass_kg = plasma.ion_mass_kg * self.superion_weight
-        self.background = build_polynomial_background(
-            simulation.radius_m,
-            simulation.height_m,
-            self.screening_length_m,
-            simulation.particle_count,
-            self.background_config,
-        )
+        if not isinstance(plasma, ArgonPresheathPlasmaSI):
+            self.background_config = self.background_config or PolynomialBackgroundConfig()
+            self.background = build_polynomial_background(
+                simulation.radius_m,
+                simulation.height_m,
+                self.screening_length_m,
+                simulation.particle_count,
+                self.background_config,
+            )
         self._velocity = _velocity_tables(plasma)
         self._dust_positions = jnp.asarray(
             [d.position_m for d in self.dust_particles], dtype=jnp.float32
@@ -197,7 +229,12 @@ class OpenDustJAX:
             [mode_values[d.charge_mode] for d in self.dust_particles], dtype=jnp.int32
         )
         self._background_coefficients = jnp.asarray(
-            self.background.coefficients, dtype=jnp.float32
+            (
+                np.zeros(15)
+                if isinstance(self.background, CylindricalSplineBackground)
+                else self.background.coefficients
+            ),
+            dtype=jnp.float32,
         )
         if diagnostics is not None:
             self._x_axis, self._z_axis = diagnostic_axes(
@@ -209,6 +246,38 @@ class OpenDustJAX:
         # needless recompilation in repeated production runs, this makes a
         # benchmark warm-up actually exclude JIT compilation from timing.
         self._compiled_chunks: dict[int, object] = {}
+
+    def _validate_presheath_background(self) -> None:
+        metadata = self.background.metadata
+        saved_plasma = metadata.get("plasma")
+        if saved_plasma != asdict(self.plasma):
+            raise ValueError("presheath background plasma configuration does not match")
+        saved_simulation = metadata.get("simulation", {})
+        for name in ("radius_m", "height_m", "particle_count", "dt_s", "seed"):
+            if saved_simulation.get(name) != getattr(self.simulation, name):
+                raise ValueError(f"presheath background {name} does not match")
+        expected_softening = self.simulation.softening_m or 1.0e-3 * self.plasma.screening_length_m
+        if not math.isclose(float(metadata.get("softening_m", -1.0)), expected_softening):
+            raise ValueError("presheath background softening_m does not match")
+        checksums = tuple(metadata.get("cross_section_sha256", ()))
+        if checksums != tuple(self.collision_model.checksums):
+            raise ValueError("presheath background cross-section data do not match")
+
+    def _axial_electric_field_V_m(self, z_m: jax.Array) -> jax.Array:
+        if isinstance(self.plasma, ArgonPresheathPlasmaSI):
+            field = self.plasma.electric_field
+            lower = -jnp.inf if field.z_min_m is None else field.z_min_m
+            upper = jnp.inf if field.z_max_m is None else field.z_max_m
+            bounded = jnp.clip(z_m, lower, upper)
+            return field.E0_V_m + field.alpha_V_m2 * bounded + field.beta_V_m3 * bounded**2
+        if isinstance(self.plasma, FieldDrivenPlasmaSI):
+            return jnp.full_like(z_m, self.plasma.electric_field_V_m)
+        return jnp.zeros_like(z_m)
+
+    def _checkpoint_background_array(self) -> np.ndarray:
+        if isinstance(self.background, CylindricalSplineBackground):
+            return np.empty((0,), dtype=np.float64)
+        return self.background.coefficients
 
     def _initial_arrays(self) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(self.simulation.seed)
@@ -290,7 +359,12 @@ class OpenDustJAX:
                 self.screening_length_m,
                 electric_field,
             )
-        return pair + external, orbit, coincident
+        total = pair + external
+        if isinstance(self.background, CylindricalSplineBackground):
+            total = total + self.background.force_N(positions, self.superion_charge_C)
+            field_z = self._axial_electric_field_V_m(positions[:, 2])
+            total = total.at[:, 2].add(self.superion_charge_C * field_z)
+        return total, orbit, coincident
 
     def initial_state(self) -> SimulationState:
         positions, velocities = self._initial_arrays()
@@ -310,6 +384,8 @@ class OpenDustJAX:
     def _reinject(
         self, positions: jax.Array, velocities: jax.Array, mask: jax.Array, key: jax.Array
     ) -> tuple[jax.Array, jax.Array]:
+        if isinstance(self.plasma, ArgonPresheathPlasmaSI):
+            return self._reinject_presheath(positions, velocities, mask, key)
         count = positions.shape[0]
         keys = jax.random.split(key, 9)
         uniform = [jax.random.uniform(k, (count,), dtype=jnp.float32) for k in keys[:6]]
@@ -377,25 +453,77 @@ class OpenDustJAX:
             jnp.where(mask[:, None], candidate_velocity, velocities),
         )
 
+    def _reinject_presheath(
+        self, positions: jax.Array, velocities: jax.Array, mask: jax.Array, key: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        count = positions.shape[0]
+        uniform_key, normal_key = jax.random.split(key)
+        uniform = jax.random.uniform(uniform_key, (count, 3), dtype=jnp.float32)
+        normal = jax.random.normal(normal_key, (count, 2), dtype=jnp.float32)
+        radius = self.simulation.radius_m * jnp.sqrt(uniform[:, 0])
+        angle = 2.0 * jnp.pi * uniform[:, 1]
+        candidate_position = jnp.stack(
+            (
+                radius * jnp.cos(angle),
+                radius * jnp.sin(angle),
+                jnp.full((count,), -0.5 * self.simulation.height_m, jnp.float32),
+            ),
+            axis=1,
+        )
+        axial = jnp.interp(
+            uniform[:, 2],
+            jnp.asarray(self._velocity["bottom_cdf"]),
+            jnp.asarray(self._velocity["bottom_values"]),
+        )
+        candidate_velocity = jnp.stack(
+            (
+                self.plasma.ion_thermal_speed_m_s * normal[:, 0],
+                self.plasma.ion_thermal_speed_m_s * normal[:, 1],
+                axial,
+            ),
+            axis=1,
+        )
+        return (
+            jnp.where(mask[:, None], candidate_position, positions),
+            jnp.where(mask[:, None], candidate_velocity, velocities),
+        )
+
+    def _reflect_presheath_side(
+        self, positions: jax.Array, velocities: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        radial = jnp.sqrt(positions[:, 0] ** 2 + positions[:, 1] ** 2)
+        outside = radial > self.simulation.radius_m
+        unit = positions[:, :2] / jnp.maximum(radial[:, None], 1.0e-20)
+        normal_velocity = jnp.sum(velocities[:, :2] * unit, axis=1)
+        reflected_velocity = velocities.at[:, :2].add(
+            jnp.where(outside[:, None], -2.0 * normal_velocity[:, None] * unit, 0.0)
+        )
+        reflected_radius = jnp.clip(
+            2.0 * self.simulation.radius_m - radial,
+            0.0,
+            self.simulation.radius_m,
+        )
+        reflected_positions = positions.at[:, :2].set(
+            jnp.where(outside[:, None], reflected_radius[:, None] * unit, positions[:, :2])
+        )
+        return reflected_positions, reflected_velocity
+
     def _dust_force_components(
         self, positions: jax.Array, charges: jax.Array, orbit_in: jax.Array
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        orbit = orbit_in + background_force_N(
-            self._dust_positions,
-            charges,
-            self._background_coefficients,
-            self.screening_length_m,
-            self.superion_charge_C,
-        )
+        if isinstance(self.background, CylindricalSplineBackground):
+            orbit = orbit_in + self.background.force_N(self._dust_positions, charges)
+        else:
+            orbit = orbit_in + background_force_N(
+                self._dust_positions,
+                charges,
+                self._background_coefficients,
+                self.screening_length_m,
+                self.superion_charge_C,
+            )
         dust_dust = dust_dust_forces_N(self._dust_positions, charges)
-        electric_field = (
-            self.plasma.electric_field_V_m
-            if isinstance(self.plasma, FieldDrivenPlasmaSI)
-            else 0.0
-        )
-        external = jnp.zeros_like(self._dust_positions).at[:, 2].set(
-            charges * electric_field
-        )
+        electric_field = self._axial_electric_field_V_m(self._dust_positions[:, 2])
+        external = jnp.zeros_like(self._dust_positions).at[:, 2].set(charges * electric_field)
         return orbit, dust_dust, external
 
     def _step(self, carry: _RunCarry, _: None):
@@ -404,21 +532,42 @@ class OpenDustJAX:
             state.prng_key, 3
         )
         velocity = state.velocities_m_s
+        zero_events = jnp.zeros((self.simulation.particle_count,), dtype=bool)
+        collision_events = CollisionEvents(
+            zero_events, zero_events, zero_events, zero_events, zero_events
+        )
         if isinstance(self.plasma, FieldDrivenPlasmaSI):
-            velocity, _ = self.collision_model.apply(
+            velocity, legacy_events = self.collision_model.apply(
                 collision_key,
                 velocity,
                 self.plasma.ion_thermal_speed_m_s,
                 self.plasma.collision_frequency_s * self.simulation.dt_s,
+            )
+            collision_events = CollisionEvents(
+                legacy_events, zero_events, legacy_events, zero_events, zero_events
+            )
+        elif isinstance(self.plasma, ArgonPresheathPlasmaSI):
+            velocity, collision_events = self.collision_model.apply(
+                collision_key,
+                velocity,
+                self.plasma.ion_thermal_speed_m_s,
+                self.simulation.dt_s,
             )
 
         half_velocity = velocity + 0.5 * self.simulation.dt_s * (
             state.forces_N / self.superion_mass_kg
         )
         drifted = state.positions_m + self.simulation.dt_s * half_velocity
+        if isinstance(self.plasma, ArgonPresheathPlasmaSI):
+            drifted, half_velocity = self._reflect_presheath_side(
+                drifted, half_velocity
+            )
         radial2 = drifted[:, 0] ** 2 + drifted[:, 1] ** 2
-        outside = (radial2 > self.simulation.radius_m**2) | (
-            jnp.abs(drifted[:, 2]) > 0.5 * self.simulation.height_m
+        outside_z = jnp.abs(drifted[:, 2]) > 0.5 * self.simulation.height_m
+        outside = (
+            outside_z
+            if isinstance(self.plasma, ArgonPresheathPlasmaSI)
+            else (radial2 > self.simulation.radius_m**2) | outside_z
         )
 
         dust_count = len(self.dust_particles)
@@ -493,6 +642,14 @@ class OpenDustJAX:
                     self._background_coefficients,
                     source_block_size=self.diagnostics.source_block_size,
                 )
+                if isinstance(self.background, CylindricalSplineBackground):
+                    xx, zz = jnp.meshgrid(self._x_axis, self._z_axis, indexing="xy")
+                    targets = jnp.stack(
+                        (xx.ravel(), jnp.zeros(xx.size, jnp.float32), zz.ravel()),
+                        axis=1,
+                    )
+                    background_potential, _ = self.background.potential_and_gradient(targets)
+                    potential = potential + background_potential.reshape(potential.shape)
                 density = plane_cic_density_snapshot_m3(
                     positions,
                     self._x_axis,
@@ -524,6 +681,11 @@ class OpenDustJAX:
             density_sum,
             sample_count,
             carry.coincident_count + coincident,
+            carry.collision_candidates + jnp.sum(collision_events.candidates),
+            carry.collision_elastic + jnp.sum(collision_events.elastic),
+            carry.collision_charge_exchange + jnp.sum(collision_events.charge_exchange),
+            carry.collision_null + jnp.sum(collision_events.null),
+            carry.collision_out_of_range + jnp.sum(collision_events.out_of_range),
         )
         history = (charges, orbit, collection_force, dust_dust, dust_external)
         return next_carry, history
@@ -547,6 +709,11 @@ class OpenDustJAX:
             jnp.zeros(grid_shape, accumulator_dtype),
             jnp.asarray(0, jnp.int32),
             jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
         )
         _, initial_orbit_in, initial_coincident = self._force(
             state.positions_m, state.dust_charges_C
@@ -566,6 +733,7 @@ class OpenDustJAX:
         histories: list[tuple[np.ndarray, ...]] = []
         trajectory_steps: list[int] = []
         trajectory_positions: list[np.ndarray] = []
+        collision_totals = [0, 0, 0, 0, 0]
         completed = 0
         while completed < self.simulation.steps:
             chunk = min(base_chunk, self.simulation.steps - completed)
@@ -574,6 +742,33 @@ class OpenDustJAX:
                     return jax.lax.scan(self._step, value, xs=None, length=_length)
                 self._compiled_chunks[chunk] = jax.jit(run_chunk)
             carry, chunk_history = self._compiled_chunks[chunk](carry)
+            chunk_collision_counts = [
+                int(np.asarray(value))
+                for value in jax.device_get(
+                    (
+                        carry.collision_candidates,
+                        carry.collision_elastic,
+                        carry.collision_charge_exchange,
+                        carry.collision_null,
+                        carry.collision_out_of_range,
+                    )
+                )
+            ]
+            if chunk_collision_counts[-1] > 0:
+                raise RuntimeError(
+                    "Ar+/Ar collision energy exceeded the 10 keV table range"
+                )
+            collision_totals = [
+                total + value for total, value in zip(collision_totals, chunk_collision_counts)
+            ]
+            zero_count = jnp.asarray(0, jnp.int32)
+            carry = carry._replace(
+                collision_candidates=zero_count,
+                collision_elastic=zero_count,
+                collision_charge_exchange=zero_count,
+                collision_null=zero_count,
+                collision_out_of_range=zero_count,
+            )
             host_history = tuple(np.asarray(x) for x in jax.device_get(chunk_history))
             histories.append(host_history)
             completed += chunk
@@ -587,7 +782,7 @@ class OpenDustJAX:
                 save_checkpoint(
                     self.output.checkpoint_path,
                     carry.state,
-                    self.background.coefficients,
+                    self._checkpoint_background_array(),
                     self._metadata(),
                 )
 
@@ -648,7 +843,7 @@ class OpenDustJAX:
             save_checkpoint(
                 self.output.checkpoint_path,
                 carry.state,
-                self.background.coefficients,
+                self._checkpoint_background_array(),
                 self._metadata(),
             )
         return SimulationResult(
@@ -665,17 +860,27 @@ class OpenDustJAX:
             trajectory_positions_m=(
                 np.stack(trajectory_positions) if trajectory_positions else None
             ),
+            collision_statistics=CollisionStatistics(
+                candidate_count=collision_totals[0],
+                elastic_count=collision_totals[1],
+                charge_exchange_count=collision_totals[2],
+                null_count=collision_totals[3],
+                out_of_range_count=collision_totals[4],
+            ),
         )
 
     def run_from_checkpoint(self, path: Path | str) -> SimulationResult:
         """Validate the saved background and continue from a checkpoint."""
         state, coefficients, _ = load_checkpoint(path)
-        if coefficients.shape != (15,) or not np.allclose(
+        if isinstance(self.background, CylindricalSplineBackground):
+            _, _, metadata = load_checkpoint(path)
+            saved = metadata.get("background", {}).get("fingerprint")
+            if saved != self.background.fingerprint:
+                raise ValueError("checkpoint presheath background does not match")
+        elif coefficients.shape != (15,) or not np.allclose(
             coefficients, self.background.coefficients, rtol=1.0e-12, atol=0.0
         ):
-            raise ValueError(
-                "checkpoint background coefficients do not match this configuration"
-            )
+            raise ValueError("checkpoint background coefficients do not match this configuration")
         return self.run(state)
 
     def _metadata(self) -> dict:
@@ -688,12 +893,20 @@ class OpenDustJAX:
             "superion_mass_kg": self.superion_mass_kg,
             "screening_length_m": self.screening_length_m,
             "softening_m": self.softening_m,
-            "background": {
-                "coefficients": self.background.coefficients.tolist(),
-                "relative_rms_error": self.background.relative_rms_error,
-                "sample_count": self.background.sample_count,
-                "cache_key": self.background.cache_key,
-            },
+            "background": (
+                {
+                    "kind": "cylindrical_spline",
+                    "fingerprint": self.background.fingerprint,
+                }
+                if isinstance(self.background, CylindricalSplineBackground)
+                else {
+                    "kind": "polynomial",
+                    "coefficients": self.background.coefficients.tolist(),
+                    "relative_rms_error": self.background.relative_rms_error,
+                    "sample_count": self.background.sample_count,
+                    "cache_key": self.background.cache_key,
+                }
+            ),
         }
 
 

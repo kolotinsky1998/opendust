@@ -19,28 +19,47 @@ from opendust_jax.cuda_pair_forces import (
 )
 from opendust_jax.background import PolynomialBackground, build_polynomial_background
 from opendust_jax.checkpoint import load_checkpoint, save_checkpoint
-from opendust_jax.collisions import CollisionModel, LegacyChargeExchangeCollision
+from opendust_jax.collisions import (
+    ArgonNullCollisionModel,
+    CollisionModel,
+    LegacyChargeExchangeCollision,
+    load_argon_cross_sections,
+)
 from opendust_jax.diagnostics import (
     plane_cic_density_snapshot_m3,
     plane_potential_snapshot_V,
 )
 from opendust_jax.models import (
+    ArgonPresheathPlasmaSI,
+    CollisionStatistics,
     DustParticleSI,
     FieldDrivenPlasmaSI,
     MaxwellianPlasmaSI,
     OutputConfig,
     PlaneDiagnosticConfig,
     PolynomialBackgroundConfig,
+    PresheathEquilibrationConfig,
+    QuadraticElectricFieldSI,
     SimulationConfigSI,
     SimulationResult,
     SimulationState,
+)
+from opendust_jax.presheath import (
+    CylindricalSplineBackground,
+    load_presheath_background,
+    prepare_presheath_background,
+    save_presheath_background,
 )
 from opendust_jax.simulation import OpenDustJAX
 from opendust_jax.validation import ValidationMetrics, compute_force_metrics
 
 __all__ = [
     "CylinderDomain",
+    "ArgonNullCollisionModel",
+    "ArgonPresheathPlasmaSI",
+    "CollisionStatistics",
     "CollisionModel",
+    "CylindricalSplineBackground",
     "DustParticleSI",
     "FieldDrivenPlasmaSI",
     "LegacyChargeExchangeCollision",
@@ -50,6 +69,8 @@ __all__ = [
     "PlaneDiagnosticConfig",
     "PolynomialBackground",
     "PolynomialBackgroundConfig",
+    "PresheathEquilibrationConfig",
+    "QuadraticElectricFieldSI",
     "SimulationConfigSI",
     "SimulationResult",
     "SimulationState",
@@ -68,8 +89,12 @@ __all__ = [
     "external_forces_cuda",
     "build_polynomial_background",
     "load_checkpoint",
+    "load_argon_cross_sections",
+    "load_presheath_background",
     "plane_cic_density_snapshot_m3",
     "plane_potential_snapshot_V",
     "save_checkpoint",
+    "prepare_presheath_background",
+    "save_presheath_background",
     "softened_yukawa_forces_cuda_with_stats",
 ]
