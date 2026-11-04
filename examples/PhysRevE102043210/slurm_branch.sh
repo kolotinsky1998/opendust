@@ -10,7 +10,8 @@ if [[ $# -ne 1 || ( "$1" != "linear" && "$1" != "quadratic" ) ]]; then
   echo "usage: $0 linear|quadratic" >&2
   exit 2
 fi
-EXAMPLE_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXAMPLE_DIR="${OPENDUST_EXAMPLE_DIR:-${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}}"
+test -f "$EXAMPLE_DIR/workflow.py"
 export JAX_ENABLE_X64=1
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
