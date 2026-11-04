@@ -17,8 +17,16 @@ The workflow is intentionally staged:
 Submit the complete dependency graph with:
 
 ```bash
+module load cuda/12.9
+conda activate opendust-jax
+cd /home/avtimofeev/developing_opendust/opendust/examples/PhysRevE102043210
 bash submit_slurm.sh
 ```
+
+The submitter pins the active Python executable, passes the absolute example
+directory into every batch job, and cancels an incomplete dependency graph if
+a later `sbatch` call fails. GPU jobs stop immediately unless JAX sees a GPU and
+the OpenDust CUDA FFI library is available.
 
 Completed stages are skipped only when their input fingerprint matches.  Delete
 or move a stage pair (`iteration_XX.npz` and `.json`) to force recomputation.
