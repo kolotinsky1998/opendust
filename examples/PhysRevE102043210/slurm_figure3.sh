@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=od-figure3
 #SBATCH --account=proj_1827
-#SBATCH --partition=test
+#SBATCH --partition=rocky
 #SBATCH --gres=gpu:1
-#SBATCH --time=00:30:00
+#SBATCH --time=10:00:00
 set -euo pipefail
 
 EXAMPLE_DIR="${OPENDUST_EXAMPLE_DIR:-${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}}"
