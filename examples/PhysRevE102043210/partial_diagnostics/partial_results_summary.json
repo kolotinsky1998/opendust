@@ -1,0 +1,317 @@
+[
+  {
+    "branch": "constant",
+    "case": "case_I",
+    "charge_1e4_e": [
+      2.515993118286133,
+      2.1816205978393555,
+      1.9799816608428955,
+      1.8196641206741333,
+      1.9133089780807495,
+      1.8206866979599,
+      1.8444099426269531
+    ],
+    "iteration": 1,
+    "max_absolute_force_imbalance_percent": 257.28896768231834,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -3.903242437473399,
+        "alpha_V_mm2": 0.3250906162296702,
+        "beta_V_mm3": 0.0
+      },
+      "quadratic": {
+        "E0_V_mm": 2.3195009358463268,
+        "alpha_V_mm2": -1.7784076238208135,
+        "beta_V_mm3": 0.17403273701400124
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -4.79,
+      "alpha_V_mm2": 0.0,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 72.67910916254571,
+    "rms_force_imbalance_percent": 175.2893243916776,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_I/constant/iteration_01.npz"
+  },
+  {
+    "branch": "linear",
+    "case": "case_I",
+    "charge_1e4_e": [
+      1.6266038417816162,
+      1.5171147584915161,
+      1.544030785560608,
+      1.4933027029037476,
+      1.5318833589553833,
+      1.6002527475357056,
+      1.6289503574371338
+    ],
+    "iteration": 2,
+    "max_absolute_force_imbalance_percent": 35.056348773490136,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -2.6799933236853852,
+        "alpha_V_mm2": 0.044923358036767516,
+        "beta_V_mm3": 0.0
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -3.903242437473399,
+      "alpha_V_mm2": 0.3250906162296702,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 56.154821288493665,
+    "rms_force_imbalance_percent": 24.33519829330399,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_I/linear/iteration_02.npz"
+  },
+  {
+    "branch": "linear",
+    "case": "case_I",
+    "charge_1e4_e": [
+      1.980946660041809,
+      1.7024219036102295,
+      1.6271809339523315,
+      1.565756916999817,
+      1.5520561933517456,
+      1.5099928379058838,
+      1.5964916944503784
+    ],
+    "iteration": 3,
+    "max_absolute_force_imbalance_percent": 31.99435733483398,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -3.788803909048621,
+        "alpha_V_mm2": 0.2423311759175056,
+        "beta_V_mm3": 0.0
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -2.6799933236853852,
+      "alpha_V_mm2": 0.044923358036767516,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 14.824963500544982,
+    "rms_force_imbalance_percent": 12.858859705502729,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_I/linear/iteration_03.npz"
+  },
+  {
+    "branch": "linear",
+    "case": "case_I",
+    "charge_1e4_e": [
+      1.8413294553756714,
+      1.5903022289276123,
+      1.5678200721740723,
+      1.5759044885635376,
+      1.5674896240234375,
+      1.615067720413208,
+      1.598695993423462
+    ],
+    "iteration": 4,
+    "max_absolute_force_imbalance_percent": 12.393796290744177,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -3.2361530275966626,
+        "alpha_V_mm2": 0.14650158184498477,
+        "beta_V_mm3": 0.0
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -3.788803909048621,
+      "alpha_V_mm2": 0.2423311759175056,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 7.72981167988636,
+    "rms_force_imbalance_percent": 6.995642073362313,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_I/linear/iteration_04.npz"
+  },
+  {
+    "branch": "linear",
+    "case": "case_I",
+    "charge_1e4_e": [
+      1.903982400894165,
+      1.6441631317138672,
+      1.6118052005767822,
+      1.568673849105835,
+      1.5204203128814697,
+      1.5273213386535645,
+      1.5787794589996338
+    ],
+    "iteration": 5,
+    "max_absolute_force_imbalance_percent": 15.930966766224117,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -3.6488437155616804,
+        "alpha_V_mm2": 0.21372617271332675,
+        "beta_V_mm3": 0.0
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -3.2361530275966626,
+      "alpha_V_mm2": 0.14650158184498477,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 3.8730066245980126,
+    "rms_force_imbalance_percent": 6.842400018270256,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_I/linear/iteration_05.npz"
+  },
+  {
+    "branch": "quadratic",
+    "case": "case_I",
+    "charge_1e4_e": [
+      1.507765293121338,
+      1.5289613008499146,
+      1.6072999238967896,
+      1.514542818069458,
+      1.5649924278259277,
+      1.5668470859527588,
+      1.5173866748809814
+    ],
+    "iteration": 2,
+    "max_absolute_force_imbalance_percent": 47.63331137565121,
+    "next_unweighted_fits": {
+      "quadratic": {
+        "E0_V_mm": -4.801887166476933,
+        "alpha_V_mm2": 0.7206235506178086,
+        "beta_V_mm3": -0.05351984906515303
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": 2.3195009358463268,
+      "alpha_V_mm2": -1.7784076238208135,
+      "beta_V_mm3": 0.17403273701400124
+    },
+    "relative_field_change_percent": 80.86945482175926,
+    "rms_force_imbalance_percent": 25.71877975156015,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_I/quadratic/iteration_02.npz"
+  },
+  {
+    "branch": "constant",
+    "case": "case_II",
+    "charge_1e4_e": [
+      3.234006881713867,
+      2.7930192947387695,
+      2.743407726287842,
+      2.6245644092559814,
+      2.5501961708068848,
+      2.398703098297119,
+      2.4811439514160156
+    ],
+    "iteration": 1,
+    "max_absolute_force_imbalance_percent": 1435.9670119723257,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -3.4210613635735565,
+        "alpha_V_mm2": 0.326825978066609,
+        "beta_V_mm3": 0.0
+      },
+      "quadratic": {
+        "E0_V_mm": -0.5318414547706755,
+        "alpha_V_mm2": -0.6498283090671145,
+        "beta_V_mm3": 0.08080340428630971
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -16.0,
+      "alpha_V_mm2": 0.0,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 94.47501388916929,
+    "rms_force_imbalance_percent": 1159.5983720168977,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_II/constant/iteration_01.npz"
+  },
+  {
+    "branch": "linear",
+    "case": "case_II",
+    "charge_1e4_e": [
+      1.3358899354934692,
+      1.3534271717071533,
+      1.405948519706726,
+      1.4181504249572754,
+      1.4344837665557861,
+      1.5100774765014648,
+      1.5518893003463745
+    ],
+    "iteration": 2,
+    "max_absolute_force_imbalance_percent": 67.91192464271082,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -2.073618694136081,
+        "alpha_V_mm2": -0.09083915945547558,
+        "beta_V_mm3": 0.0
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -3.4210613635735565,
+      "alpha_V_mm2": 0.326825978066609,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 171.97764050976792,
+    "rms_force_imbalance_percent": 50.29780041005374,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_II/linear/iteration_02.npz"
+  },
+  {
+    "branch": "constant",
+    "case": "case_III",
+    "charge_1e4_e": [
+      3.580702066421509,
+      3.2361209392547607,
+      3.142915725708008,
+      3.0298144817352295,
+      3.0091168880462646,
+      2.9700376987457275,
+      2.6758737564086914
+    ],
+    "iteration": 1,
+    "max_absolute_force_imbalance_percent": 3344.677964312191,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -3.1985297264632115,
+        "alpha_V_mm2": 0.32568474561791005,
+        "beta_V_mm3": 0.0
+      },
+      "quadratic": {
+        "E0_V_mm": -1.9617636429957113,
+        "alpha_V_mm2": -0.0923841227018425,
+        "beta_V_mm3": 0.03458889008259232
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -32.5,
+      "alpha_V_mm2": 0.0,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 97.84444861003084,
+    "rms_force_imbalance_percent": 2854.3261991069658,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_III/constant/iteration_01.npz"
+  },
+  {
+    "branch": "linear",
+    "case": "case_III",
+    "charge_1e4_e": [
+      1.3028185367584229,
+      1.280704379081726,
+      1.3593109846115112,
+      1.3573070764541626,
+      1.3986996412277222,
+      1.4857739210128784,
+      1.4819018840789795
+    ],
+    "iteration": 2,
+    "max_absolute_force_imbalance_percent": 75.69039642651497,
+    "next_unweighted_fits": {
+      "linear": {
+        "E0_V_mm": -2.140292600988446,
+        "alpha_V_mm2": -0.09202833602476232,
+        "beta_V_mm3": 0.0
+      }
+    },
+    "paper_field": {
+      "E0_V_mm": -3.1985297264632115,
+      "alpha_V_mm2": 0.32568474561791005,
+      "beta_V_mm3": 0.0
+    },
+    "relative_field_change_percent": 254.73601760716681,
+    "rms_force_imbalance_percent": 59.82355775734789,
+    "source": "/Users/daniilkolotinsky/Downloads/PhysRevE102043210/results/case_III/linear/iteration_02.npz"
+  }
+]

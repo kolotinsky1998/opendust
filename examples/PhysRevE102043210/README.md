@@ -48,3 +48,28 @@ The implementation deliberately uses OpenDust's physical absorption radius and
 the existing orbit+collection force.  It does not implement the DRIAD critical
 radius or Maxwell-stress tensor; this difference is recorded in every stage and
 in the validation report.
+
+## Standalone Figure 3 workflow
+
+Figure 3 can be reproduced independently of the dust-chain iterations.  It
+runs three dust-free Case-II presheaths using the constant, fifth-iteration
+linear, and fifth-iteration quadratic fields printed in Table I, then overlays
+the resulting density and drift profiles with an approximate digitization of
+the published curves:
+
+```bash
+cd /home/avtimofeev/developing_opendust/opendust/examples/PhysRevE102043210
+sbatch slurm_figure3.sh
+```
+
+Outputs are written to `results/figure3_table_I/`, including
+`figure3_comparison.png`, `figure3_comparison.pdf`, the comparison CSV, and a
+JSON file with density/velocity RMSE.  Compatible stationary-background files
+are reused on restart.  The bundled article curves are explicitly approximate
+pixel digitizations, not original author data.
+
+A short CPU/JAX functional check is available with:
+
+```bash
+JAX_ENABLE_X64=1 python3 figure3_workflow.py --smoke --profile all
+```
