@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from fractions import Fraction
 import math
 from pathlib import Path
 from typing import NamedTuple
@@ -58,6 +59,7 @@ from opendust_jax.physics import (
     dust_dust_forces_N,
     update_dust_charges_C,
 )
+from opendust_jax.timestepping import resolve_collision_substeps
 
 
 class _RunCarry(NamedTuple):
@@ -74,6 +76,29 @@ class _RunCarry(NamedTuple):
     collision_charge_exchange: jax.Array
     collision_null: jax.Array
     collision_out_of_range: jax.Array
+    collision_operator_calls: jax.Array
+
+
+def _merged_substep_schedule(
+    dt_s: float, collision_substeps: int, charging_substeps: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return segment durations and collision indices on the union time grid."""
+    boundaries = {
+        *(Fraction(index, collision_substeps) for index in range(collision_substeps + 1)),
+        *(Fraction(index, charging_substeps) for index in range(charging_substeps + 1)),
+    }
+    ordered = sorted(boundaries)
+    durations = np.asarray(
+        [float(right - left) * dt_s for left, right in zip(ordered[:-1], ordered[1:])],
+        dtype=np.float32,
+    )
+    collision_indices = []
+    for left in ordered[:-1]:
+        scaled = left * collision_substeps
+        collision_indices.append(
+            int(scaled) if scaled.denominator == 1 and int(scaled) < collision_substeps else -1
+        )
+    return durations, np.asarray(collision_indices, dtype=np.int32)
 
 
 def _normal_pdf(values: np.ndarray, mean: float, sigma: float) -> np.ndarray:
@@ -180,9 +205,9 @@ class OpenDustJAX:
             self.collision_model = collision_model or ArgonNullCollisionModel(plasma)
             if not isinstance(self.collision_model, ArgonNullCollisionModel):
                 raise TypeError("Argon presheath requires ArgonNullCollisionModel")
-            self.collision_model.validate_timestep(simulation.dt_s)
+            if simulation.collision_subcycling is None:
+                self.collision_model.validate_timestep(simulation.dt_s)
             self.background = background
-            self._validate_presheath_background()
         else:
             if isinstance(background, CylindricalSplineBackground):
                 raise TypeError("cylindrical backgrounds require ArgonPresheathPlasmaSI")
@@ -191,7 +216,7 @@ class OpenDustJAX:
         if simulation.force_backend == "cuda" and not cuda_pair_forces_available():
             raise RuntimeError(
                 "The OpenDustJAX CUDA FFI library is unavailable. Build it with "
-                "performance/JAX/build_cuda_pair_forces.py on an NVIDIA GPU host."
+                "scripts/build_cuda_pair_forces.py on an NVIDIA GPU host."
             )
         if diagnostics is not None and not jax.config.x64_enabled:
             warnings.warn(
@@ -233,6 +258,37 @@ class OpenDustJAX:
         )
         self.charging_substeps = self._resolve_charging_substeps()
         self.charging_dt_s = simulation.dt_s / self.charging_substeps
+        (
+            self.collision_substeps,
+            self.collision_dt_s,
+            _,
+            _,
+        ) = resolve_collision_substeps(
+            plasma,
+            simulation.dt_s,
+            simulation.collision_subcycling,
+            self.collision_model
+            if isinstance(self.collision_model, ArgonNullCollisionModel)
+            else None,
+        )
+        if isinstance(plasma, ArgonPresheathPlasmaSI):
+            self.collision_model.validate_timestep(self.collision_dt_s)
+            self._validate_presheath_background()
+        durations, collision_indices = _merged_substep_schedule(
+            simulation.dt_s, self.collision_substeps, self.charging_substeps
+        )
+        self.integration_segments = len(durations)
+        self.maximum_fast_dt_s = float(np.max(durations))
+        self._segment_durations_host = durations
+        self._segment_durations_s = jnp.asarray(durations, dtype=jnp.float32)
+        self._segment_collision_indices = jnp.asarray(
+            collision_indices, dtype=jnp.int32
+        )
+        active_collision_indices = np.maximum.accumulate(collision_indices)
+        self._segment_active_collision_indices = jnp.asarray(
+            active_collision_indices, dtype=jnp.int32
+        )
+        self._segment_indices = jnp.arange(self.integration_segments, dtype=jnp.int32)
         self._background_coefficients = jnp.asarray(
             (
                 np.zeros(15)
@@ -302,6 +358,23 @@ class OpenDustJAX:
         for name in ("radius_m", "height_m", "particle_count", "dt_s", "seed"):
             if saved_simulation.get(name) != getattr(self.simulation, name):
                 raise ValueError(f"presheath background {name} does not match")
+        saved_collision_config = saved_simulation.get("collision_subcycling")
+        expected_collision_config = asdict(self.simulation).get("collision_subcycling")
+        if saved_collision_config != expected_collision_config:
+            raise ValueError(
+                "presheath background collision_subcycling does not match"
+            )
+        saved_splitting = metadata.get("collision_subcycling")
+        if self.simulation.collision_subcycling is not None and (
+            saved_splitting is None
+            or int(saved_splitting.get("resolved_substeps", 0))
+            != self.collision_substeps
+            or not math.isclose(
+                float(saved_splitting.get("dt_collision_s", -1.0)),
+                self.collision_dt_s,
+            )
+        ):
+            raise ValueError("presheath background collision schedule does not match")
         expected_softening = self.simulation.softening_m or 1.0e-3 * self.plasma.screening_length_m
         if not math.isclose(float(metadata.get("softening_m", -1.0)), expected_softening):
             raise ValueError("presheath background softening_m does not match")
@@ -595,6 +668,8 @@ class OpenDustJAX:
         collision_events: CollisionEvents,
         fast_forces_N: jax.Array | None = None,
         orbit_in_N: jax.Array | None = None,
+        collision_counts: tuple[jax.Array, ...] | None = None,
+        collision_operator_calls: jax.Array | int = 0,
     ) -> _RunCarry:
         positions = next_state.positions_m
         if self.diagnostics is not None:
@@ -647,6 +722,14 @@ class OpenDustJAX:
                 carry.density_sum,
                 carry.sample_count,
             )
+        if collision_counts is None:
+            collision_counts = (
+                jnp.sum(collision_events.candidates, dtype=jnp.int32),
+                jnp.sum(collision_events.elastic, dtype=jnp.int32),
+                jnp.sum(collision_events.charge_exchange, dtype=jnp.int32),
+                jnp.sum(collision_events.null, dtype=jnp.int32),
+                jnp.sum(collision_events.out_of_range, dtype=jnp.int32),
+            )
         return _RunCarry(
             next_state,
             pair_forces_N,
@@ -656,16 +739,13 @@ class OpenDustJAX:
             density_sum,
             sample_count,
             carry.coincident_count + coincident,
-            carry.collision_candidates
-            + jnp.sum(collision_events.candidates, dtype=jnp.int32),
-            carry.collision_elastic
-            + jnp.sum(collision_events.elastic, dtype=jnp.int32),
-            carry.collision_charge_exchange
-            + jnp.sum(collision_events.charge_exchange, dtype=jnp.int32),
-            carry.collision_null
-            + jnp.sum(collision_events.null, dtype=jnp.int32),
-            carry.collision_out_of_range
-            + jnp.sum(collision_events.out_of_range, dtype=jnp.int32),
+            carry.collision_candidates + collision_counts[0],
+            carry.collision_elastic + collision_counts[1],
+            carry.collision_charge_exchange + collision_counts[2],
+            carry.collision_null + collision_counts[3],
+            carry.collision_out_of_range + collision_counts[4],
+            carry.collision_operator_calls
+            + jnp.asarray(collision_operator_calls, dtype=jnp.int32),
         )
 
     def _step(self, carry: _RunCarry, _: None):
@@ -768,7 +848,18 @@ class OpenDustJAX:
         )
 
         next_carry = self._complete_carry(
-            carry, next_state, carry.pair_forces_N, coincident, collision_events
+            carry,
+            next_state,
+            carry.pair_forces_N,
+            coincident,
+            collision_events,
+            collision_operator_calls=(
+                1
+                if isinstance(
+                    self.plasma, (FieldDrivenPlasmaSI, ArgonPresheathPlasmaSI)
+                )
+                else 0
+            ),
         )
         history = (charges, orbit, collection_force, dust_dust, dust_external)
         return next_carry, history
@@ -912,6 +1003,263 @@ class OpenDustJAX:
             collision_events,
             fast_force,
             orbit_in,
+            collision_operator_calls=(
+                1
+                if isinstance(
+                    self.plasma, (FieldDrivenPlasmaSI, ArgonPresheathPlasmaSI)
+                )
+                else 0
+            ),
+        )
+        history = (charges, orbit, collection_force, dust_dust, dust_external)
+        return next_carry, history
+
+    def _step_multirate(self, carry: _RunCarry, _: None):
+        """Advance one outer ion-ion step on the merged collision/charge grid."""
+        state = carry.state
+        next_key, base_step_key = jax.random.split(state.prng_key)
+        step_key = jax.random.fold_in(base_step_key, state.step)
+        velocity = state.velocities_m_s + 0.5 * self.simulation.dt_s * (
+            carry.pair_forces_N / self.superion_mass_kg
+        )
+        dust_count = len(self.dust_particles)
+        ion_temperature = (
+            self.plasma.ion_temperature_K
+            if isinstance(self.plasma, MaxwellianPlasmaSI)
+            else self.plasma.neutral_temperature_K
+        )
+        zero_count = jnp.asarray(0, jnp.int32)
+
+        def fast_segment(inner, schedule):
+            (
+                positions,
+                velocities,
+                charges,
+                momentum,
+                fast_force,
+                orbit_in,
+                candidates,
+                elastic_count,
+                cx_count,
+                null_count,
+                out_of_range_count,
+                operator_calls,
+            ) = inner
+            (
+                segment_dt,
+                collision_index,
+                active_collision_index,
+                segment_index,
+            ) = schedule
+
+            def apply_collision(current_velocity):
+                collision_key = jax.random.fold_in(
+                    jax.random.fold_in(step_key, 0x434F4C4C), collision_index
+                )
+                if isinstance(self.plasma, FieldDrivenPlasmaSI):
+                    updated, events = self.collision_model.apply(
+                        collision_key,
+                        current_velocity,
+                        self.plasma.ion_thermal_speed_m_s,
+                        self.plasma.collision_frequency_s * self.collision_dt_s,
+                    )
+                    count = jnp.sum(events, dtype=jnp.int32)
+                    return updated, (
+                        count,
+                        zero_count,
+                        count,
+                        zero_count,
+                        zero_count,
+                        jnp.asarray(1, jnp.int32),
+                    )
+                if isinstance(self.plasma, ArgonPresheathPlasmaSI):
+                    updated, events = self.collision_model.apply(
+                        collision_key,
+                        current_velocity,
+                        self.plasma.ion_thermal_speed_m_s,
+                        self.collision_dt_s,
+                    )
+                    return updated, (
+                        jnp.sum(events.candidates, dtype=jnp.int32),
+                        jnp.sum(events.elastic, dtype=jnp.int32),
+                        jnp.sum(events.charge_exchange, dtype=jnp.int32),
+                        jnp.sum(events.null, dtype=jnp.int32),
+                        jnp.sum(events.out_of_range, dtype=jnp.int32),
+                        jnp.asarray(1, jnp.int32),
+                    )
+                return current_velocity, (
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                )
+
+            def skip_collision(current_velocity):
+                return current_velocity, (
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                    zero_count,
+                )
+
+            velocities, counts = jax.lax.cond(
+                collision_index >= 0,
+                apply_collision,
+                skip_collision,
+                velocities,
+            )
+            half_velocity = velocities + 0.5 * segment_dt * (
+                fast_force / self.superion_mass_kg
+            )
+            drifted = positions + segment_dt * half_velocity
+            if isinstance(self.plasma, ArgonPresheathPlasmaSI):
+                drifted, half_velocity = self._reflect_presheath_side(
+                    drifted, half_velocity
+                )
+            radial2 = drifted[:, 0] ** 2 + drifted[:, 1] ** 2
+            outside_z = jnp.abs(drifted[:, 2]) > 0.5 * self.simulation.height_m
+            outside = (
+                outside_z
+                if isinstance(self.plasma, ArgonPresheathPlasmaSI)
+                else (radial2 > self.simulation.radius_m**2) | outside_z
+            )
+
+            if dust_count:
+                distance2 = jnp.sum(
+                    (drifted[:, None, :] - self._dust_positions[None, :, :]) ** 2,
+                    axis=-1,
+                )
+                inside_each = distance2 <= self._dust_radii[None, :] ** 2
+                absorbed = jnp.any(inside_each, axis=1)
+                owner = jnp.argmin(distance2, axis=1)
+                ownership = (
+                    jax.nn.one_hot(owner, dust_count, dtype=jnp.float32)
+                    * absorbed[:, None]
+                )
+                absorbed_counts = jnp.sum(ownership, axis=0)
+                momentum = momentum + ownership.T @ half_velocity
+            else:
+                absorbed = jnp.zeros((self.simulation.particle_count,), dtype=bool)
+                absorbed_counts = jnp.zeros((0,), jnp.float32)
+            invalid = outside | absorbed
+            charges = update_dust_charges_C(
+                charges,
+                self._dust_modes,
+                absorbed_counts,
+                self._dust_radii,
+                self.superion_charge_C,
+                self.plasma.density_m3,
+                self.plasma.electron_temperature_K,
+                ion_temperature,
+                self.plasma.ion_mass_kg,
+                self.plasma.flow_speed_m_s,
+                segment_dt,
+            )
+            reinjection_key = jax.random.fold_in(
+                jax.random.fold_in(
+                    jax.random.fold_in(step_key, 0x5245494E),
+                    active_collision_index,
+                ),
+                segment_index,
+            )
+            positions, injected_velocity = self._reinject(
+                drifted, half_velocity, invalid, reinjection_key
+            )
+            next_fast, next_orbit = self._fast_force(positions, charges)
+            velocities = injected_velocity + jnp.where(
+                invalid[:, None],
+                0.0,
+                0.5 * segment_dt * next_fast / self.superion_mass_kg,
+            )
+            return (
+                positions,
+                velocities,
+                charges,
+                momentum,
+                next_fast,
+                next_orbit,
+                candidates + counts[0],
+                elastic_count + counts[1],
+                cx_count + counts[2],
+                null_count + counts[3],
+                out_of_range_count + counts[4],
+                operator_calls + counts[5],
+            ), None
+
+        initial_inner = (
+            state.positions_m,
+            velocity,
+            state.dust_charges_C,
+            jnp.zeros((dust_count, 3), jnp.float32),
+            carry.fast_forces_N,
+            carry.orbit_in_N,
+            zero_count,
+            zero_count,
+            zero_count,
+            zero_count,
+            zero_count,
+            zero_count,
+        )
+        final_inner, _ = jax.lax.scan(
+            fast_segment,
+            initial_inner,
+            (
+                self._segment_durations_s,
+                self._segment_collision_indices,
+                self._segment_active_collision_indices,
+                self._segment_indices,
+            ),
+        )
+        (
+            positions,
+            velocity,
+            charges,
+            momentum,
+            fast_force,
+            orbit_in,
+            candidate_count,
+            elastic_count,
+            cx_count,
+            null_count,
+            out_of_range_count,
+            operator_calls,
+        ) = final_inner
+        pair_force, coincident = self._pair_force(positions)
+        completed_velocity = velocity + 0.5 * self.simulation.dt_s * (
+            pair_force / self.superion_mass_kg
+        )
+        force = pair_force + fast_force
+        next_state = SimulationState(
+            positions, completed_velocity, force, charges, state.step + 1, next_key
+        )
+        orbit, dust_dust, dust_external = self._dust_force_components(
+            positions, charges, orbit_in
+        )
+        collection_force = self.superion_mass_kg / self.simulation.dt_s * momentum
+        zero_events = jnp.zeros((self.simulation.particle_count,), dtype=bool)
+        empty_events = CollisionEvents(
+            zero_events, zero_events, zero_events, zero_events, zero_events
+        )
+        next_carry = self._complete_carry(
+            carry,
+            next_state,
+            pair_force,
+            coincident,
+            empty_events,
+            fast_force,
+            orbit_in,
+            (
+                candidate_count,
+                elastic_count,
+                cx_count,
+                null_count,
+                out_of_range_count,
+            ),
+            operator_calls,
         )
         history = (charges, orbit, collection_force, dust_dust, dust_external)
         return next_carry, history
@@ -947,6 +1295,7 @@ class OpenDustJAX:
             jnp.asarray(0, jnp.int32),
             jnp.asarray(0, jnp.int32),
             jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
         )
         initial_orbit, initial_dust_dust, initial_external = self._dust_force_components(
             state.positions_m, state.dust_charges_C, initial_orbit_in
@@ -963,15 +1312,19 @@ class OpenDustJAX:
         histories: list[tuple[np.ndarray, ...]] = []
         trajectory_steps: list[int] = []
         trajectory_positions: list[np.ndarray] = []
-        collision_totals = [0, 0, 0, 0, 0]
+        collision_totals = [0, 0, 0, 0, 0, 0]
         completed = 0
         while completed < self.simulation.steps:
             chunk = min(base_chunk, self.simulation.steps - completed)
             if chunk not in self._compiled_chunks:
                 step_function = (
-                    self._step_subcycled
-                    if self.simulation.charging_subcycling is not None
-                    else self._step
+                    self._step_multirate
+                    if self.simulation.collision_subcycling is not None
+                    else (
+                        self._step_subcycled
+                        if self.simulation.charging_subcycling is not None
+                        else self._step
+                    )
                 )
                 def run_chunk(value, *, _length=chunk):
                     return jax.lax.scan(step_function, value, xs=None, length=_length)
@@ -986,10 +1339,11 @@ class OpenDustJAX:
                         carry.collision_charge_exchange,
                         carry.collision_null,
                         carry.collision_out_of_range,
+                        carry.collision_operator_calls,
                     )
                 )
             ]
-            if chunk_collision_counts[-1] > 0:
+            if chunk_collision_counts[4] > 0:
                 raise RuntimeError(
                     "Ar+/Ar collision energy exceeded the 10 keV table range"
                 )
@@ -1003,6 +1357,7 @@ class OpenDustJAX:
                 collision_charge_exchange=zero_count,
                 collision_null=zero_count,
                 collision_out_of_range=zero_count,
+                collision_operator_calls=zero_count,
             )
             host_history = tuple(np.asarray(x) for x in jax.device_get(chunk_history))
             histories.append(host_history)
@@ -1101,12 +1456,58 @@ class OpenDustJAX:
                 charge_exchange_count=collision_totals[2],
                 null_count=collision_totals[3],
                 out_of_range_count=collision_totals[4],
+                operator_call_count=collision_totals[5],
             ),
         )
 
     def run_from_checkpoint(self, path: Path | str) -> SimulationResult:
         """Validate the saved background and continue from a checkpoint."""
         state, coefficients, metadata = load_checkpoint(path)
+        saved_collision_subcycling = metadata.get("collision_subcycling")
+        collision_enabled = self.simulation.collision_subcycling is not None
+        if saved_collision_subcycling is None:
+            if collision_enabled:
+                raise ValueError(
+                    "legacy checkpoint can only resume with collision subcycling disabled"
+                )
+        else:
+            saved_durations = np.asarray(
+                saved_collision_subcycling.get(
+                    "segment_durations_s", [self.simulation.dt_s]
+                ),
+                dtype=np.float64,
+            )
+            durations_match = (
+                saved_durations.shape == self._segment_durations_host.shape
+                and np.allclose(
+                    saved_durations,
+                    self._segment_durations_host,
+                    rtol=1.0e-12,
+                    atol=0.0,
+                )
+            )
+            if (
+                bool(saved_collision_subcycling.get("enabled"))
+                != collision_enabled
+                or metadata.get("simulation", {}).get("collision_subcycling")
+                != asdict(self.simulation).get("collision_subcycling")
+                or int(saved_collision_subcycling.get("resolved_substeps", 1))
+                != self.collision_substeps
+                or not math.isclose(
+                    float(
+                        saved_collision_subcycling.get(
+                            "dt_collision_s", self.simulation.dt_s
+                        )
+                    ),
+                    self.collision_dt_s,
+                )
+                or int(saved_collision_subcycling.get("integration_segments", 1))
+                != self.integration_segments
+                or not durations_match
+            ):
+                raise ValueError(
+                    "checkpoint collision subcycling configuration does not match"
+                )
         saved_subcycling = metadata.get("charging_subcycling")
         enabled = self.simulation.charging_subcycling is not None
         if saved_subcycling is None:
@@ -1146,6 +1547,15 @@ class OpenDustJAX:
             "superion_mass_kg": self.superion_mass_kg,
             "screening_length_m": self.screening_length_m,
             "softening_m": self.softening_m,
+            "time_splitting_version": 1,
+            "collision_subcycling": {
+                "enabled": self.simulation.collision_subcycling is not None,
+                "resolved_substeps": self.collision_substeps,
+                "dt_collision_s": self.collision_dt_s,
+                "integration_segments": self.integration_segments,
+                "maximum_fast_dt_s": self.maximum_fast_dt_s,
+                "segment_durations_s": self._segment_durations_host.tolist(),
+            },
             "charging_subcycling": {
                 "enabled": self.simulation.charging_subcycling is not None,
                 "resolved_substeps": self.charging_substeps,

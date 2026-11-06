@@ -10,7 +10,7 @@ from pathlib import Path
 
 import jax
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = REPO_ROOT / "src/opendust_jax/cuda/pair_forces_cuda.cu"
 DEFAULT_OUTPUT = (
     REPO_ROOT / "src/opendust_jax/_cuda/libopendust_jax_pair_forces.so"

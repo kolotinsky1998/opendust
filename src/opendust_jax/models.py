@@ -249,6 +249,23 @@ class PresheathEquilibrationConfig:
 
 
 @dataclass(frozen=True)
+class CollisionSubcyclingConfig:
+    """Resolve neutral-collision sampling inside one ion-ion force step."""
+
+    substeps: int | None = None
+    maximum_candidate_probability: float = 0.1
+
+    def __post_init__(self) -> None:
+        if self.substeps is not None and self.substeps <= 0:
+            raise ValueError("substeps must be positive when specified")
+        probability = self.maximum_candidate_probability
+        if not math.isfinite(probability) or not 0.0 < probability < 1.0:
+            raise ValueError(
+                "maximum_candidate_probability must lie between zero and one"
+            )
+
+
+@dataclass(frozen=True)
 class ChargingSubcyclingConfig:
     """Resolve ion collection by dust inside one main integration step."""
 
@@ -277,6 +294,7 @@ class SimulationConfigSI:
     force_backend: ForceBackend = "cuda"
     step_chunk_size: int = 100
     softening_m: float | None = None
+    collision_subcycling: CollisionSubcyclingConfig | None = None
     charging_subcycling: ChargingSubcyclingConfig | None = None
 
     def __post_init__(self) -> None:
@@ -402,6 +420,7 @@ class CollisionStatistics:
     charge_exchange_count: int = 0
     null_count: int = 0
     out_of_range_count: int = 0
+    operator_call_count: int = 0
 
 
 def validate_system(
@@ -410,7 +429,10 @@ def validate_system(
     dust_particles: tuple[DustParticleSI, ...],
     diagnostics: PlaneDiagnosticConfig | None,
 ) -> None:
-    if isinstance(plasma, FieldDrivenPlasmaSI):
+    if (
+        isinstance(plasma, FieldDrivenPlasmaSI)
+        and simulation.collision_subcycling is None
+    ):
         probability = plasma.collision_frequency_s * simulation.dt_s
         if probability > 1.0:
             raise ValueError("collision_frequency_s * dt_s must not exceed 1")

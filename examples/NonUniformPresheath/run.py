@@ -5,6 +5,7 @@ from pathlib import Path
 from opendust_jax import (
     ArgonPresheathPlasmaSI,
     ChargingSubcyclingConfig,
+    CollisionSubcyclingConfig,
     DustParticleSI,
     OpenDustJAX,
     OutputConfig,
@@ -31,12 +32,16 @@ plasma = ArgonPresheathPlasmaSI(
     ),
 )
 lambda_de = plasma.screening_length_m
-time_step = recommend_main_timestep(plasma)
+collision_subcycling = CollisionSubcyclingConfig()
+time_step = recommend_main_timestep(
+    plasma, collision_subcycling=collision_subcycling
+)
 common = dict(
     radius_m=1.25 * lambda_de,
     height_m=5.0 * lambda_de,
     particle_count=2**16,
     dt_s=time_step.recommended_dt_s,
+    collision_subcycling=collision_subcycling,
     seed=7,
     force_backend="cuda",
     step_chunk_size=100,
@@ -71,9 +76,16 @@ engine = OpenDustJAX(
 )
 result = engine.run()
 print(
-    "main dt, charging substeps, charging dt:",
+    "ion-ion dt, collision substeps/dt, charging substeps, max fast dt:",
     production.dt_s,
+    engine.collision_substeps,
+    engine.collision_dt_s,
     engine.charging_substeps,
-    engine.charging_dt_s,
+    engine.maximum_fast_dt_s,
+)
+print(
+    "pair-force calls:",
+    production.steps,
+    "outer-step updates (+1 initial evaluation)",
 )
 print(result.collision_statistics)

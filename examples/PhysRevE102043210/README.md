@@ -39,10 +39,11 @@ reproduction), run:
 JAX_ENABLE_X64=1 python3 workflow.py --stage smoke
 ```
 
-The reported main step resolves the ion plasma frequency and null-collision
-majorant.  `ChargingSubcyclingConfig()` automatically chooses the smaller
-charging step from the 10% dust-radius displacement criterion.  Diagnostics and
-the reported 83 plasma-period duration remain on the main-step time grid.
+The reported outer step resolves the ion plasma frequency and updates the
+ion-ion force once. `CollisionSubcyclingConfig()` resolves the null-collision
+majorant inside it, while `ChargingSubcyclingConfig()` chooses the still smaller
+charging step from the 10% dust-radius displacement criterion. Diagnostics and
+the full duration (83(2\pi/\omega_{pi})) remain on the outer-step time grid.
 
 The implementation deliberately uses OpenDust's physical absorption radius and
 the existing orbit+collection force.  It does not implement the DRIAD critical

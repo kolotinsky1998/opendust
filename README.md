@@ -47,7 +47,7 @@ NVIDIA GPU. It retains Piel's asymmetric ion-dust model and uses the custom
 triangular CUDA pair kernel through JAX XLA FFI. Build the native library first:
 
 ```bash
-python3 performance/JAX/build_cuda_pair_forces.py --cuda-arch 70  # V100
+python3 scripts/build_cuda_pair_forces.py --cuda-arch 70  # V100
 ```
 
 Minimal fixed-charge simulation:
@@ -108,30 +108,44 @@ the stationary density, ion potential, compensating cubic-interpolated
 potential, and convergence history to NPZ/JSON. See
 `examples/NonUniformPresheath` for a complete configuration.
 
-### Charging subcycling
+### Collision and charging subcycling
 
-Self-consistent dust charging can use a smaller ion-collection step without
-recomputing the O(N²) ion-ion force or neutral collisions on every substep:
+The expensive ion-ion force can be updated on an outer step while neutral
+collisions and self-consistent dust charging use independent inner grids:
 
 ```python
-from opendust_jax import ChargingSubcyclingConfig, recommend_main_timestep
+from opendust_jax import (
+    ChargingSubcyclingConfig, CollisionSubcyclingConfig,
+    recommend_main_timestep,
+)
 
-limits = recommend_main_timestep(plasma)
+collision_subcycling = CollisionSubcyclingConfig()
+limits = recommend_main_timestep(
+    plasma, collision_subcycling=collision_subcycling
+)
 simulation = SimulationConfigSI(
     # geometry, particle count, and step count omitted
     dt_s=limits.recommended_dt_s,
+    collision_subcycling=collision_subcycling,
     charging_subcycling=ChargingSubcyclingConfig(),
 )
 engine = OpenDustJAX(plasma, simulation, dust, background=background)
-print(engine.charging_substeps, engine.charging_dt_s)
+print(engine.collision_substeps, engine.collision_dt_s)
+print(engine.charging_substeps, engine.integration_segments)
 result = engine.run()
 ```
+
+The automatic collision count keeps the Bernoulli candidate probability at or
+below 0.1. Collision and charging boundaries are merged without constructing a
+least-common-multiple grid. `dt_s`, `steps`, diagnostics, and checkpoints refer
+to the outer ion-ion-force step. Leaving `collision_subcycling=None` preserves
+the original one-collision-call-per-step algorithm.
 
 The automatic substep count limits the nominal displacement to 10% of the
 smallest self-consistently charged dust radius using
 `abs(flow_speed) + 4 * ion_thermal_speed`. Set `substeps` or
 `velocity_limit_m_s` explicitly when a different bound is required. Output,
-checkpoints, and diagnostic intervals remain indexed by the main step.
+checkpoints, and diagnostic intervals remain indexed by the outer step.
 
 Email: kolotinskiy.da@phystech.edu
 

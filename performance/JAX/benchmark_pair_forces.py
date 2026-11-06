@@ -94,7 +94,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Also benchmark the optional triangular warp-tiled CUDA FFI backend. "
-            "Build it first with performance/JAX/build_cuda_pair_forces.py."
+            "Build it first with scripts/build_cuda_pair_forces.py."
         ),
     )
     parser.add_argument(

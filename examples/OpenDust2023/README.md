@@ -21,7 +21,7 @@ for the target GPU before submitting any example:
 ```bash
 module load cuda/12.9
 conda activate opendust-jax
-python performance/JAX/build_cuda_pair_forces.py --cuda-arch 70
+python scripts/build_cuda_pair_forces.py --cuda-arch 70
 ```
 
 Install the plotting dependency if it is not already present with

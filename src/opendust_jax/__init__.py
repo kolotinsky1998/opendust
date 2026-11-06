@@ -32,6 +32,7 @@ from opendust_jax.diagnostics import (
 from opendust_jax.models import (
     ArgonPresheathPlasmaSI,
     ChargingSubcyclingConfig,
+    CollisionSubcyclingConfig,
     CollisionStatistics,
     DustParticleSI,
     FieldDrivenPlasmaSI,
@@ -77,6 +78,7 @@ __all__ = [
     "ArticleCase",
     "ArticleReproductionConfig",
     "ChargingSubcyclingConfig",
+    "CollisionSubcyclingConfig",
     "CollisionStatistics",
     "CollisionModel",
     "CylindricalSplineBackground",

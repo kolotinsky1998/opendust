@@ -37,7 +37,7 @@ def _register_cuda_target() -> None:
         if not path.is_file():
             raise RuntimeError(
                 f"OpenDust JAX CUDA library was not found at {path}. "
-                "Build it with performance/JAX/build_cuda_pair_forces.py."
+                "Build it with scripts/build_cuda_pair_forces.py."
             )
         try:
             library = ctypes.CDLL(str(path))

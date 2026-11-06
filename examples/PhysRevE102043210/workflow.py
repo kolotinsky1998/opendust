@@ -18,6 +18,7 @@ from opendust_jax import (
     ArgonPresheathPlasmaSI,
     ArticleReproductionConfig,
     ChargingSubcyclingConfig,
+    CollisionSubcyclingConfig,
     DustParticleSI,
     OpenDustJAX,
     OutputConfig,
@@ -175,11 +176,18 @@ def run_stage(
     plasma = article_plasma(
         field, mach, height_m, float(dust_z_m[0]), float(dust_z_m[-1])
     )
-    recommendation = recommend_main_timestep(plasma)
+    collision_subcycling = CollisionSubcyclingConfig()
+    recommendation = recommend_main_timestep(
+        plasma, collision_subcycling=collision_subcycling
+    )
     omega_pi = recommendation.ion_plasma_frequency_s
     dt_s = recommendation.recommended_dt_s
-    steps = math.ceil(config.duration_plasma_periods / (omega_pi * dt_s))
-    burn_in_step = math.ceil(config.burn_in_plasma_periods / (omega_pi * dt_s))
+    steps = math.ceil(
+        config.duration_plasma_periods * 2.0 * math.pi / (omega_pi * dt_s)
+    )
+    burn_in_step = math.ceil(
+        config.burn_in_plasma_periods * 2.0 * math.pi / (omega_pi * dt_s)
+    )
     input_payload = {
         "workflow": config_as_metadata(config),
         "case": asdict(case),
@@ -190,6 +198,7 @@ def run_stage(
         "parent": parent,
         "dt_s": dt_s,
         "steps": steps,
+        "collision_subcycling": asdict(collision_subcycling),
     }
     fingerprint = artifact_fingerprint(input_payload)
     prefix = artifact_prefix(config, case_index, branch, iteration)
@@ -202,6 +211,7 @@ def run_stage(
         height_m=height_m,
         particle_count=config.particle_count,
         dt_s=dt_s,
+        collision_subcycling=collision_subcycling,
         seed=case.seed,
         force_backend=config.force_backend,
         step_chunk_size=config.step_chunk_size,
@@ -317,8 +327,14 @@ def run_stage(
             "DRIAD b_c/Maxwell-stress construction is intentionally not used"
         ),
         "burn_in_step": burn_in_step,
-        "resolved_substeps": engine.charging_substeps,
+        "resolved_collision_substeps": engine.collision_substeps,
+        "dt_collision_s": engine.collision_dt_s,
+        "resolved_charging_substeps": engine.charging_substeps,
         "dt_charge_s": engine.charging_dt_s,
+        "integration_segments": engine.integration_segments,
+        "maximum_fast_dt_s": engine.maximum_fast_dt_s,
+        "pair_force_outer_updates": steps,
+        "pair_force_calls_including_initialization": steps + 1,
         "collision_statistics": asdict(result.collision_statistics),
         "relative_field_change": float(relative_field_change),
         "converged_at_one_percent": converged,
@@ -333,7 +349,9 @@ def run_stage(
     save_iteration_artifact(prefix, arrays, metadata)
     print(
         f"completed {case.name} {branch} iteration {iteration}: "
-        f"dt={dt_s:.4e}s, Nsub={engine.charging_substeps}, "
+        f"dt_ii={dt_s:.4e}s, Ncoll={engine.collision_substeps}, "
+        f"Ncharge={engine.charging_substeps}, Nsegments={engine.integration_segments}, "
+        f"pair calls={steps}+1 init, "
         f"max dE/E={relative_field_change:.3%}"
     )
     return prefix

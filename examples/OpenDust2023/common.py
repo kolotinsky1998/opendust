@@ -229,7 +229,7 @@ def run_case_cli(
     if not cuda_pair_forces_available():
         raise SystemExit(
             "The OpenDustJAX CUDA FFI library is unavailable. Build it with "
-            "performance/JAX/build_cuda_pair_forces.py before submitting the examples."
+            "scripts/build_cuda_pair_forces.py before submitting the examples."
         )
 
     results_dir = (args.output_dir or (figure_dir / "results")).resolve()

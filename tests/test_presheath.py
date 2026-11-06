@@ -21,12 +21,14 @@ from opendust_jax.collisions import (
 )
 from opendust_jax.models import (
     ArgonPresheathPlasmaSI,
+    CollisionSubcyclingConfig,
     PolynomialBackgroundConfig,
     PresheathEquilibrationConfig,
     QuadraticElectricFieldSI,
     SimulationConfigSI,
 )
 from opendust_jax.simulation import OpenDustJAX
+from opendust_jax.timestepping import resolve_collision_substeps
 from opendust_jax.presheath import (
     CylindricalSplineBackground,
     _axisymmetric_node_density,
@@ -104,6 +106,22 @@ def test_candidate_probability_guard_rejects_large_timestep():
     model = ArgonNullCollisionModel(argon_plasma())
     with pytest.raises(ValueError, match="reduce dt_s"):
         model.validate_timestep(1.0 / model.maximum_frequency_s)
+
+
+def test_argon_collision_substeps_use_null_majorant_limit():
+    plasma = argon_plasma()
+    model = ArgonNullCollisionModel(plasma)
+    limit = -math.log(0.9) / model.maximum_frequency_s
+    resolved, dt_collision, frequency, returned_limit = resolve_collision_substeps(
+        plasma,
+        2.5 * limit,
+        CollisionSubcyclingConfig(),
+        model,
+    )
+    assert resolved == 3
+    assert dt_collision <= limit
+    assert frequency == pytest.approx(model.maximum_frequency_s)
+    assert returned_limit == pytest.approx(limit)
 
 
 def test_collision_operator_flags_energy_above_table_range():
@@ -247,7 +265,12 @@ def test_prepare_then_run_small_presheath_case(tmp_path):
         force_backend="jax",
         step_chunk_size=2,
     )
-    preparation = SimulationConfigSI(steps=0, **common)
+    collision_subcycling = CollisionSubcyclingConfig(substeps=2)
+    preparation = SimulationConfigSI(
+        steps=0,
+        collision_subcycling=collision_subcycling,
+        **common,
+    )
     equilibration = PresheathEquilibrationConfig(
         output_prefix=tmp_path / "small",
         grid_spacing_screening_lengths=0.5,
@@ -266,6 +289,21 @@ def test_prepare_then_run_small_presheath_case(tmp_path):
     cached = prepare_presheath_background(plasma, preparation, equilibration)
     assert cached.fingerprint == background.fingerprint
     np.testing.assert_array_equal(cached.potential_V, background.potential_V)
-    production = SimulationConfigSI(steps=1, **common)
-    result = OpenDustJAX(plasma, production, background=background).run()
+    assert background.metadata["collision_subcycling"]["resolved_substeps"] == 2
+    assert background.metadata["collision_subcycling"]["dt_collision_s"] == pytest.approx(
+        common["dt_s"] / 2
+    )
+    production = SimulationConfigSI(
+        steps=1,
+        collision_subcycling=collision_subcycling,
+        **common,
+    )
+    runner = OpenDustJAX(plasma, production, background=background)
+    assert runner.collision_substeps == 2
+    result = runner.run()
     assert int(result.final_state.step) == 1
+    assert result.collision_statistics.operator_call_count == 2
+
+    incompatible = SimulationConfigSI(steps=1, **common)
+    with pytest.raises(ValueError, match="collision_subcycling does not match"):
+        OpenDustJAX(plasma, incompatible, background=background)

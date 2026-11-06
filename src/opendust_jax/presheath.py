@@ -20,6 +20,7 @@ from opendust_jax.models import (
     PresheathEquilibrationConfig,
     SimulationConfigSI,
 )
+from opendust_jax.timestepping import resolve_collision_substeps
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,8 @@ def _fingerprint(
     equilibration: PresheathEquilibrationConfig,
     softening_m: float,
     checksums: tuple[str, str],
+    collision_substeps: int,
+    collision_dt_s: float,
 ) -> str:
     payload = {
         "format_version": 1,
@@ -131,6 +134,9 @@ def _fingerprint(
             "particle_count": simulation.particle_count,
             "dt_s": simulation.dt_s,
             "seed": simulation.seed,
+            "collision_subcycling": asdict(simulation).get("collision_subcycling"),
+            "resolved_collision_substeps": collision_substeps,
+            "collision_dt_s": collision_dt_s,
         },
         "equilibration": {
             key: value
@@ -304,9 +310,23 @@ def prepare_presheath_background(
     """Equilibrate noninteracting ions and build their compensating potential."""
     plasma.electric_field.validate_for_domain(simulation.height_m)
     collision = collision_model or ArgonNullCollisionModel(plasma)
-    collision.validate_timestep(simulation.dt_s)
+    collision_substeps, collision_dt_s, _, _ = resolve_collision_substeps(
+        plasma,
+        simulation.dt_s,
+        simulation.collision_subcycling,
+        collision,
+    )
+    collision.validate_timestep(collision_dt_s)
     softening = simulation.softening_m or 1.0e-3 * plasma.screening_length_m
-    fingerprint = _fingerprint(plasma, simulation, config, softening, collision.checksums)
+    fingerprint = _fingerprint(
+        plasma,
+        simulation,
+        config,
+        softening,
+        collision.checksums,
+        collision_substeps,
+        collision_dt_s,
+    )
     cache_path = Path(config.output_prefix).expanduser().with_name(
         Path(config.output_prefix).name + "_background.npz"
     )
@@ -330,15 +350,20 @@ def prepare_presheath_background(
     nz_profile = max(8, int(math.ceil(simulation.height_m / (config.grid_spacing_screening_lengths * plasma.screening_length_m))))
 
     def run_block(carry, block_steps: int):
-        def one_step(inner, _):
+        def one_collision_substep(inner, _):
             pos, vel, random_key, density_sum, flux_sum, out_count = inner
             random_key, collision_key, reinjection_key = jax.random.split(random_key, 3)
-            vel, events = collision.apply(collision_key, vel, plasma.ion_thermal_speed_m_s, simulation.dt_s)
+            vel, events = collision.apply(
+                collision_key,
+                vel,
+                plasma.ion_thermal_speed_m_s,
+                collision_dt_s,
+            )
             acceleration = ELEMENTARY_CHARGE_C * _field_values(plasma, pos[:, 2]) / plasma.ion_mass_kg
-            vel = vel.at[:, 2].add(0.5 * simulation.dt_s * acceleration)
-            pos = pos + simulation.dt_s * vel
+            vel = vel.at[:, 2].add(0.5 * collision_dt_s * acceleration)
+            pos = pos + collision_dt_s * vel
             acceleration_new = ELEMENTARY_CHARGE_C * _field_values(plasma, pos[:, 2]) / plasma.ion_mass_kg
-            vel = vel.at[:, 2].add(0.5 * simulation.dt_s * acceleration_new)
+            vel = vel.at[:, 2].add(0.5 * collision_dt_s * acceleration_new)
 
             radial = jnp.sqrt(pos[:, 0] ** 2 + pos[:, 1] ** 2)
             side = radial > simulation.radius_m
@@ -364,7 +389,23 @@ def prepare_presheath_background(
             density_sum += jnp.bincount(index, length=nz_profile)
             flux_sum += jnp.bincount(index, weights=vel[:, 2], length=nz_profile)
             out_of_range = jnp.sum(events.out_of_range, dtype=jnp.int32)
-            return (pos, vel, random_key, density_sum, flux_sum, out_count + out_of_range), None
+            return (
+                pos,
+                vel,
+                random_key,
+                density_sum,
+                flux_sum,
+                out_count + out_of_range,
+            ), None
+
+        def one_step(inner, _):
+            final, _ = jax.lax.scan(
+                one_collision_substep,
+                inner,
+                xs=None,
+                length=collision_substeps,
+            )
+            return final, None
 
         initial = (carry[0], carry[1], carry[2], jnp.zeros(nz_profile), jnp.zeros(nz_profile), jnp.asarray(0, jnp.int32))
         final, _ = jax.lax.scan(one_step, initial, xs=None, length=block_steps)
@@ -399,8 +440,9 @@ def prepare_presheath_background(
         steps = min(block_steps, maximum_steps - completed)
         density, flux = execute(steps)
         completed += steps
-        density = density / float(steps)
-        flux = flux / float(steps)
+        samples = float(steps * collision_substeps)
+        density = density / samples
+        flux = flux / samples
         if previous_density is None:
             density_change = flux_change = math.inf
         else:
@@ -462,6 +504,12 @@ def prepare_presheath_background(
         "cross_section_sha256": collision.checksums,
         "completed_steps": completed + config.averaging_blocks * block_steps,
         "boundary_model": "upstream_reinjection_specular_side",
+        "time_splitting_version": 1,
+        "collision_subcycling": {
+            "enabled": simulation.collision_subcycling is not None,
+            "resolved_substeps": collision_substeps,
+            "dt_collision_s": collision_dt_s,
+        },
     }
     background = CylindricalSplineBackground(
         r_m=r_axis,

@@ -21,6 +21,7 @@ import numpy as np
 from opendust_jax import (
     ARTICLE_DUST_Z_OVER_LAMBDA,
     ArgonPresheathPlasmaSI,
+    CollisionSubcyclingConfig,
     PaperElectricField,
     PresheathEquilibrationConfig,
     SimulationConfigSI,
@@ -126,7 +127,10 @@ def run_profile(
         ion_mass_kg=ARTICLE_ION_MASS_KG,
         electric_field=field,
     )
-    timestep = recommend_main_timestep(plasma)
+    collision_subcycling = CollisionSubcyclingConfig()
+    timestep = recommend_main_timestep(
+        plasma, collision_subcycling=collision_subcycling
+    )
     particle_count = 64 if smoke else int(raw["particle_count"])
     simulation = SimulationConfigSI(
         radius_m=radius,
@@ -134,6 +138,7 @@ def run_profile(
         particle_count=particle_count,
         steps=0,
         dt_s=timestep.recommended_dt_s,
+        collision_subcycling=collision_subcycling,
         seed=20_041,
         force_backend="jax" if smoke else str(raw["force_backend"]),
         step_chunk_size=1 if smoke else int(raw["step_chunk_size"]),
@@ -206,13 +211,16 @@ def run_profile(
             "dt_s": timestep.recommended_dt_s,
             "ion_plasma_frequency_s": timestep.ion_plasma_frequency_s,
             "collision_majorant_frequency_s": timestep.collision_frequency_s,
+            "collision_substeps": timestep.collision_substeps,
+            "collision_dt_s": timestep.collision_dt_s,
             "background_fingerprint": background.fingerprint,
             "background_metadata": background.metadata,
             "smoke": smoke,
         },
     )
     print(
-        f"completed Figure 3 {name}: N={particle_count}, dt={timestep.recommended_dt_s:.6e}s, "
+        f"completed Figure 3 {name}: N={particle_count}, dt_ii={timestep.recommended_dt_s:.6e}s, "
+        f"Ncoll={timestep.collision_substeps}, dt_coll={timestep.collision_dt_s:.6e}s, "
         f"background={background.fingerprint}",
         flush=True,
     )

@@ -64,7 +64,7 @@ operation can be used inside `jax.jit`.
 Build it for a V100 (`sm_70`) in the same environment that contains JAX:
 
 ```bash
-python3 performance/JAX/build_cuda_pair_forces.py --cuda-arch 70
+python3 scripts/build_cuda_pair_forces.py --cuda-arch 70
 ```
 
 The build needs `nvcc` from a CUDA 12 toolkit. On a module-based cluster, load
@@ -110,6 +110,18 @@ Compilation and initialization occur during the warmup and are excluded from
 the measured repetitions. The existing pair-force benchmark remains the
 like-for-like OpenMM comparison; the full benchmark measures the additional
 integration, boundary, charging, and dust-force overhead.
+
+The three-level integrator has a fixed-physical-duration convergence benchmark
+for the outer steps 0.5, 1, 2, 5, and 10 ns:
+
+```bash
+python3 performance/JAX/benchmark_multirate_convergence.py
+```
+
+It writes a CSV comparing density, axial speed, collision rate, dust charge,
+force, and wake peak, together with all axial wake profiles. Use
+`--particles 64 --duration-ns 2 --dt-ns 0.5 1 --backend jax` for a CPU smoke
+check; those reduced results are not physically representative.
 
 ## Piel2017 Figure 1 controlled comparison
 
