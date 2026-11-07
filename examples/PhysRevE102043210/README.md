@@ -11,7 +11,8 @@ The workflow is intentionally staged:
    background and runs iteration 1.
 2. The linear and quadratic arrays independently run iterations 2--5 in order.
    Each iteration fits the preceding seven force-balance values without
-   weighting, evaluates Eq. (15), prepares a new background, and runs production.
+   weighting inside the strict admissible field region, evaluates Eq. (15),
+   prepares a new background, and runs production.
 3. Postprocessing writes PNG, PDF, CSV, and `validation_report.json`.
 
 Submit the complete dependency graph with:
@@ -39,11 +40,27 @@ reproduction), run:
 JAX_ENABLE_X64=1 python3 workflow.py --stage smoke
 ```
 
-The reported outer step resolves the ion plasma frequency and updates the
-ion-ion force once. `CollisionSubcyclingConfig()` resolves the null-collision
-majorant inside it, while `ChargingSubcyclingConfig()` chooses the still smaller
-charging step from the 10% dust-radius displacement criterion. Diagnostics and
-the full duration (83(2\pi/\omega_{pi})) remain on the outer-step time grid.
+Every production stage uses exactly 250,000 outer ion--ion force updates over
+the full duration `83 * (2*pi/omega_pi)`.  Thus `dt_ii` is the physical duration
+divided by 250,000 rather than the plasma-limit recommendation; the default
+burn-in `16.6 tau_i` starts at outer step 50,000.  The expensive plane
+diagnostic is sampled every 500 outer steps. `CollisionSubcyclingConfig()`
+resolves the null-collision majorant inside each outer step, while
+`ChargingSubcyclingConfig()` chooses the still smaller charging step from the
+10% dust-radius displacement criterion.
+
+Each stage prints and records separate wall-clock durations for presheath
+background preparation/loading, production (including JIT compilation),
+postprocessing, and the complete stage. CUDA work is synchronized before the
+production timer stops. The background timing also reports whether a compatible
+cache was reused. A branch array task still runs iterations 2--5 sequentially,
+so it performs one million outer pair-force updates per case.
+
+Both the raw unweighted fit and the applied constrained fit are written to the
+iteration JSON. Linear fits enforce nonnegative paper-coordinate slope;
+quadratic fits enforce positive curvature and the strict vertex bounds used by
+`QuadraticElectricFieldSI`. If the bounded optimizer fails, the workflow uses
+its admissible projected starting point instead of aborting the branch.
 
 The implementation deliberately uses OpenDust's physical absorption radius and
 the existing orbit+collection force.  It does not implement the DRIAD critical

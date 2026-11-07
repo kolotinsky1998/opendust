@@ -1,6 +1,7 @@
 import json
 import math
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
@@ -14,16 +15,35 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from opendust_jax.article_reproduction import (
+    ARTICLE_CASES,
+    ARTICLE_DUST_RADIUS_M,
+    ARTICLE_ELECTRON_TEMPERATURE_K,
+    ARTICLE_ION_TEMPERATURE_K,
+    ARTICLE_PRESSURE_PA,
+    ARTICLE_REFERENCE_DENSITY_M3,
+    ARTICLE_ION_MASS_KG,
+    ArticleReproductionConfig,
     PaperElectricField,
     article_drift_mach,
     completed_artifact_matches,
     fit_required_field,
+    fit_required_field_constrained,
     normalized_force_imbalance,
     paper_z_m,
     required_field_V_m,
+    resolve_article_time_grid,
     save_iteration_artifact,
     simulation_z_m,
 )
+from opendust_jax.collisions import ArgonNullCollisionModel
+from opendust_jax.models import (
+    ELEMENTARY_CHARGE_C,
+    EPSILON_0_F_M,
+    ArgonPresheathPlasmaSI,
+    CollisionSubcyclingConfig,
+)
+from opendust_jax.timestepping import resolve_collision_substeps
+import opendust_jax.article_reproduction as article_reproduction
 
 
 def test_paper_coordinate_and_field_round_trip():
@@ -76,6 +96,139 @@ def test_unweighted_linear_and_quadratic_fits_recover_coefficients():
             rtol=1e-12,
             atol=1e-12,
         )
+
+
+def test_article_time_grid_has_exact_outer_steps_duration_and_burn_in(tmp_path):
+    config = ArticleReproductionConfig(output_dir=tmp_path)
+    omega_pi = math.sqrt(
+        ARTICLE_REFERENCE_DENSITY_M3 * ELEMENTARY_CHARGE_C**2
+        / (EPSILON_0_F_M * ARTICLE_ION_MASS_KG)
+    )
+    grid = resolve_article_time_grid(config, omega_pi)
+    assert grid.outer_steps == 250_000
+    assert grid.burn_in_step == 50_000
+    assert grid.duration_s == pytest.approx(83.0 * 2.0 * math.pi / omega_pi)
+    assert grid.outer_steps * grid.dt_s == pytest.approx(grid.duration_s)
+    assert grid.dt_s == pytest.approx(9.97824065802749e-10)
+
+
+def test_article_grid_resolves_collision_and_charging_limits(tmp_path):
+    config = ArticleReproductionConfig(output_dir=tmp_path)
+    omega_pi = math.sqrt(
+        ARTICLE_REFERENCE_DENSITY_M3 * ELEMENTARY_CHARGE_C**2
+        / (EPSILON_0_F_M * ARTICLE_ION_MASS_KG)
+    )
+    grid = resolve_article_time_grid(config, omega_pi)
+    height = 5.0 * math.sqrt(
+        EPSILON_0_F_M
+        * 1.380649e-23
+        * ARTICLE_ELECTRON_TEMPERATURE_K
+        / (ELEMENTARY_CHARGE_C**2 * ARTICLE_REFERENCE_DENSITY_M3)
+    )
+    for case in ARTICLE_CASES:
+        plasma = ArgonPresheathPlasmaSI(
+            ARTICLE_ION_TEMPERATURE_K,
+            ARTICLE_ELECTRON_TEMPERATURE_K,
+            ARTICLE_REFERENCE_DENSITY_M3,
+            ARTICLE_PRESSURE_PA,
+            case.initial_mach,
+            PaperElectricField(-case.constant_field_V_m / 1.0e3).to_simulation(
+                height, enforce_presheath_constraints=False
+            ),
+            ARTICLE_ION_MASS_KG,
+        )
+        collision = ArgonNullCollisionModel(plasma)
+        substeps, collision_dt, _, _ = resolve_collision_substeps(
+            plasma,
+            grid.dt_s,
+            CollisionSubcyclingConfig(),
+            collision,
+        )
+        candidate_probability = 1.0 - math.exp(
+            -collision.maximum_frequency_s * collision_dt
+        )
+        assert substeps == 4
+        assert candidate_probability <= 0.1 + 1.0e-12
+        velocity_limit = abs(plasma.flow_speed_m_s) + 4.0 * plasma.ion_thermal_speed_m_s
+        charging_substeps = math.ceil(
+            grid.dt_s * velocity_limit / (0.1 * ARTICLE_DUST_RADIUS_M)
+        )
+        assert (
+            grid.dt_s * velocity_limit / charging_substeps
+            <= 0.1 * ARTICLE_DUST_RADIUS_M
+        )
+
+
+def test_constrained_linear_fit_clamps_negative_slope():
+    height = 8.0e-3
+    z = np.linspace(-3.0e-3, -1.0e-3, 7)
+    raw = PaperElectricField(-1.0, -0.4, 0.0)
+    required = -np.asarray(raw.value_V_mm(paper_z_m(z, height) * 1.0e3)) * 1.0e3
+    fit = fit_required_field_constrained(
+        z,
+        required,
+        height,
+        1,
+        active_z_min_m=float(z[0]),
+        active_z_max_m=float(z[-1]),
+    )
+    assert fit.unconstrained_field.alpha_V_mm2 < 0.0
+    assert fit.field.alpha_V_mm2 == 0.0
+    assert fit.constraints_active
+    fit.field.to_simulation(
+        height, z_min_m=float(z[0]), z_max_m=float(z[-1])
+    ).validate_for_domain(height, lowest_dust_z_m=float(z[0]))
+
+
+def test_constrained_quadratic_fit_projects_into_strict_region():
+    height = 8.0e-3
+    z = np.linspace(-3.0e-3, -1.0e-3, 7)
+    invalid = PaperElectricField(-2.0, 0.4, -0.08)
+    required = -np.asarray(invalid.value_V_mm(paper_z_m(z, height) * 1.0e3)) * 1.0e3
+    fit = fit_required_field_constrained(
+        z,
+        required,
+        height,
+        2,
+        active_z_min_m=float(z[0]),
+        active_z_max_m=float(z[-1]),
+    )
+    assert fit.field.beta_V_mm3 > 0.0
+    assert fit.constraints_active
+    simulation = fit.field.to_simulation(
+        height, z_min_m=float(z[0]), z_max_m=float(z[-1])
+    )
+    simulation.validate_for_domain(height, lowest_dust_z_m=float(z[0]))
+
+
+def test_constrained_quadratic_fit_uses_feasible_fallback(monkeypatch):
+    height = 8.0e-3
+    z = np.linspace(-3.0e-3, -1.0e-3, 7)
+    invalid = PaperElectricField(-2.0, 0.4, -0.08)
+    required = -np.asarray(invalid.value_V_mm(paper_z_m(z, height) * 1.0e3)) * 1.0e3
+
+    def failed_optimizer(*args, **kwargs):
+        return SimpleNamespace(
+            success=False,
+            x=np.asarray([np.nan, np.nan, np.nan]),
+            fun=np.nan,
+            message="synthetic failure",
+        )
+
+    monkeypatch.setattr(article_reproduction.optimize, "minimize", failed_optimizer)
+    fit = fit_required_field_constrained(
+        z,
+        required,
+        height,
+        2,
+        active_z_min_m=float(z[0]),
+        active_z_max_m=float(z[-1]),
+    )
+    assert fit.fallback_used
+    assert not fit.optimizer_success
+    fit.field.to_simulation(
+        height, z_min_m=float(z[0]), z_max_m=float(z[-1])
+    ).validate_for_domain(height, lowest_dust_z_m=float(z[0]))
 
 
 def test_force_balance_and_normalized_imbalance_are_consistent():

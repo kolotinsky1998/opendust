@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import asdict, replace
+from datetime import datetime
 import json
 import math
 from pathlib import Path
 import sys
+import time
+from typing import Literal
 
+import jax
 import numpy as np
 
 from opendust_jax import (
@@ -42,12 +47,63 @@ from opendust_jax.article_reproduction import (
     completed_artifact_matches,
     config_as_metadata,
     fit_required_field,
+    fit_required_field_constrained,
+    resolve_article_time_grid,
     save_iteration_artifact,
     summarize_production_result,
 )
 
 
 HERE = Path(__file__).resolve().parent
+
+
+def format_wall_time(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+@contextmanager
+def timed_phase(label: str, metadata_key: str, timings: dict[str, float]):
+    started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    started = time.perf_counter()
+    print(f"[{started_at}] starting {label}", flush=True)
+    try:
+        yield
+    except BaseException:
+        elapsed = time.perf_counter() - started
+        failed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        print(
+            f"[{failed_at}] failed {label} after {elapsed:.3f} s "
+            f"({format_wall_time(elapsed)})",
+            flush=True,
+        )
+        raise
+    elapsed = time.perf_counter() - started
+    timings[metadata_key] = elapsed
+    finished_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    print(
+        f"[{finished_at}] completed {label} in {elapsed:.3f} s "
+        f"({format_wall_time(elapsed)})",
+        flush=True,
+    )
+
+
+def file_signature(path: Path) -> tuple[int, int] | None:
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def update_saved_metadata(path: Path, metadata: dict) -> None:
+    temporary = path.with_name(path.name + ".timing.tmp")
+    temporary.write_text(
+        json.dumps({"format_version": 1, **metadata}, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def load_config(path: Path) -> ArticleReproductionConfig:
@@ -108,13 +164,14 @@ def stage_field_and_mach(
     iteration: int,
     height_m: float,
     dust_z_m: np.ndarray,
-) -> tuple[PaperElectricField, float, np.ndarray, str | None]:
+) -> tuple[PaperElectricField, float, np.ndarray, str | None, dict | None]:
     case = ARTICLE_CASES[case_index]
     if iteration == 1:
         return (
             PaperElectricField(-case.constant_field_V_m / 1.0e3),
             case.initial_mach,
             np.full(len(dust_z_m), -ARTICLE_DUST_MASS_KG * 9.81 / case.constant_field_V_m),
+            None,
             None,
         )
     previous_prefix = (
@@ -124,15 +181,24 @@ def stage_field_and_mach(
     )
     previous_metadata, previous = read_stage(previous_prefix)
     degree = 1 if branch == "linear" else 2
-    field = fit_required_field(
+    fit = fit_required_field_constrained(
         dust_z_m,
         previous["required_field_sim_V_m"],
         height_m,
         degree,
+        active_z_min_m=float(dust_z_m[0]),
+        active_z_max_m=float(dust_z_m[-1]),
     )
+    field = fit.field
     z_upstream_paper_mm = (0.5 * height_m - dust_z_m[0]) * 1.0e3
     mach = article_drift_mach(abs(field.value_V_mm(z_upstream_paper_mm)) * 1.0e3)
-    return field, mach, previous["mean_charge_C"], previous_metadata["fingerprint"]
+    return (
+        field,
+        mach,
+        previous["mean_charge_C"],
+        previous_metadata["fingerprint"],
+        asdict(fit),
+    )
 
 
 def run_stage(
@@ -155,24 +221,9 @@ def run_stage(
     radius_m = config.radius_screening_lengths * lambda_de
     height_m = config.height_screening_lengths * lambda_de
     dust_z_m = np.asarray(ARTICLE_DUST_Z_OVER_LAMBDA) * lambda_de
-    field, mach, initial_charges, parent = stage_field_and_mach(
+    field, mach, initial_charges, parent, applied_fit = stage_field_and_mach(
         config, case_index, branch, iteration, height_m, dust_z_m
     )
-    if config.smoke_project_invalid_fields and branch != "constant":
-        try:
-            candidate = field.to_simulation(
-                height_m,
-                z_min_m=float(dust_z_m[0]),
-                z_max_m=float(dust_z_m[-1]),
-            )
-            candidate.validate_for_domain(height_m)
-        except ValueError:
-            field = (
-                PaperElectricField(-4.0, 0.2, 0.0)
-                if branch == "linear"
-                else PaperElectricField(0.5, -1.32, 0.12)
-            )
-            parent = f"{parent}: smoke field projected into strict admissible set"
     plasma = article_plasma(
         field, mach, height_m, float(dust_z_m[0]), float(dust_z_m[-1])
     )
@@ -181,23 +232,27 @@ def run_stage(
         plasma, collision_subcycling=collision_subcycling
     )
     omega_pi = recommendation.ion_plasma_frequency_s
-    dt_s = recommendation.recommended_dt_s
-    steps = math.ceil(
-        config.duration_plasma_periods * 2.0 * math.pi / (omega_pi * dt_s)
-    )
-    burn_in_step = math.ceil(
-        config.burn_in_plasma_periods * 2.0 * math.pi / (omega_pi * dt_s)
-    )
+    time_grid = resolve_article_time_grid(config, omega_pi)
+    dt_s = time_grid.dt_s
+    steps = time_grid.outer_steps
+    burn_in_step = time_grid.burn_in_step
     input_payload = {
         "workflow": config_as_metadata(config),
         "case": asdict(case),
         "branch": branch,
         "iteration": iteration,
         "paper_field": asdict(field),
+        "applied_constrained_fit": applied_fit,
         "mach": mach,
         "parent": parent,
         "dt_s": dt_s,
         "steps": steps,
+        "dt_ii_s": dt_s,
+        "outer_steps": steps,
+        "ion_plasma_frequency_s": omega_pi,
+        "ion_plasma_period_s": time_grid.ion_plasma_period_s,
+        "duration_s": time_grid.duration_s,
+        "plasma_limit_s": recommendation.plasma_limit_s,
         "collision_subcycling": asdict(collision_subcycling),
     }
     fingerprint = artifact_fingerprint(input_payload)
@@ -205,6 +260,9 @@ def run_stage(
     if completed_artifact_matches(prefix, fingerprint):
         print(f"skip compatible completed stage: {prefix}")
         return prefix
+
+    stage_started = time.perf_counter()
+    timings: dict[str, float] = {}
 
     common = dict(
         radius_m=radius_m,
@@ -218,20 +276,39 @@ def run_stage(
     )
     preparation = SimulationConfigSI(steps=0, **common)
     background_prefix = prefix.parent / f"{prefix.name}_presheath"
-    background = prepare_presheath_background(
-        plasma,
-        preparation,
-        PresheathEquilibrationConfig(
-            output_prefix=background_prefix,
-            grid_spacing_screening_lengths=config.background_grid_spacing_screening_lengths,
-            density_tolerance=config.background_density_tolerance,
-            flux_tolerance=config.background_flux_tolerance,
-            consecutive_blocks=config.background_consecutive_blocks,
-            minimum_transit_times=config.background_minimum_transit_times,
-            maximum_transit_times=config.background_maximum_transit_times,
-            averaging_blocks=config.background_averaging_blocks,
-            source_block_size=min(4096, config.particle_count),
-        ),
+    background_npz = background_prefix.with_name(
+        background_prefix.name + "_background.npz"
+    )
+    background_signature_before = file_signature(background_npz)
+    with timed_phase(
+        f"{case.name} {branch} iteration {iteration} background preparation",
+        "background_preparation_wall_s",
+        timings,
+    ):
+        background = prepare_presheath_background(
+            plasma,
+            preparation,
+            PresheathEquilibrationConfig(
+                output_prefix=background_prefix,
+                grid_spacing_screening_lengths=config.background_grid_spacing_screening_lengths,
+                density_tolerance=config.background_density_tolerance,
+                flux_tolerance=config.background_flux_tolerance,
+                consecutive_blocks=config.background_consecutive_blocks,
+                minimum_transit_times=config.background_minimum_transit_times,
+                maximum_transit_times=config.background_maximum_transit_times,
+                averaging_blocks=config.background_averaging_blocks,
+                source_block_size=min(4096, config.particle_count),
+            ),
+        )
+        jax.block_until_ready(background.potential_V)
+    background_cache_reused = (
+        background_signature_before is not None
+        and background_signature_before == file_signature(background_npz)
+    )
+    print(
+        "presheath background: "
+        + ("compatible cache reused" if background_cache_reused else "calculated and saved"),
+        flush=True,
     )
     dust = [
         DustParticleSI(
@@ -255,20 +332,32 @@ def run_stage(
         interval=config.diagnostic_interval,
         output_prefix=prefix,
     )
-    engine = OpenDustJAX(
-        plasma,
-        production,
-        dust,
-        background=background,
-        diagnostics=diagnostics,
-        output=OutputConfig(checkpoint_path=prefix.with_name(prefix.name + "_restart.npz")),
-    )
-    result = engine.run()
+    with timed_phase(
+        f"{case.name} {branch} iteration {iteration} production",
+        "production_wall_s",
+        timings,
+    ):
+        engine = OpenDustJAX(
+            plasma,
+            production,
+            dust,
+            background=background,
+            diagnostics=diagnostics,
+            output=OutputConfig(
+                checkpoint_path=prefix.with_name(prefix.name + "_restart.npz")
+            ),
+        )
+        result = engine.run()
+        jax.block_until_ready(result.final_state.positions_m)
+    postprocessing_started = time.perf_counter()
+    postprocessing_started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    print(f"[{postprocessing_started_at}] starting postprocessing", flush=True)
     input_field_sim = np.asarray(
         [plasma.electric_field.value_V_m(float(z)) for z in dust_z_m]
     )
     summary = summarize_production_result(result, burn_in_step, input_field_sim)
     next_fits = {}
+    next_constrained_fits = {}
     fit_degrees = (1, 2) if branch == "constant" else ((1,) if branch == "linear" else (2,))
     relative_field_change = float(
         np.max(
@@ -282,12 +371,23 @@ def run_stage(
         )
         fit_name = "linear" if degree == 1 else "quadratic"
         next_fits[fit_name] = asdict(fitted)
+        constrained = fit_required_field_constrained(
+            dust_z_m,
+            summary["required_field_sim_V_m"],
+            height_m,
+            degree,
+            active_z_min_m=float(dust_z_m[0]),
+            active_z_max_m=float(dust_z_m[-1]),
+        )
+        next_constrained_fits[fit_name] = asdict(constrained)
         if fit_name == branch:
-            next_simulation = fitted.to_simulation(
+            next_simulation = constrained.field.to_simulation(
                 height_m,
                 z_min_m=float(dust_z_m[0]),
-                z_max_m=0.5 * height_m,
-                enforce_presheath_constraints=False,
+                z_max_m=float(dust_z_m[-1]),
+            )
+            next_simulation.validate_for_domain(
+                height_m, lowest_dust_z_m=float(dust_z_m[0])
             )
             next_values = np.asarray(
                 [next_simulation.value_V_m(float(z)) for z in dust_z_m]
@@ -322,6 +422,7 @@ def run_stage(
         **input_payload,
         "background_fingerprint": background.fingerprint,
         "background_prefix": str(background_prefix),
+        "background_cache_reused": background_cache_reused,
         "force_collection_model": (
             "OpenDust physical absorption radius and orbit+collection force; "
             "DRIAD b_c/Maxwell-stress construction is intentionally not used"
@@ -339,6 +440,7 @@ def run_stage(
         "relative_field_change": float(relative_field_change),
         "converged_at_one_percent": converged,
         "next_unweighted_fits": next_fits,
+        "next_constrained_fits": next_constrained_fits,
         "units": {
             "charge": "C",
             "force": "N",
@@ -346,13 +448,28 @@ def run_stage(
             "paper_field_coefficients": "V/mm, V/mm^2, V/mm^3",
         },
     }
-    save_iteration_artifact(prefix, arrays, metadata)
+    metadata["timings"] = dict(timings)
+    _, metadata_path = save_iteration_artifact(prefix, arrays, metadata)
+    timings["postprocessing_wall_s"] = time.perf_counter() - postprocessing_started
+    timings["total_stage_wall_s"] = time.perf_counter() - stage_started
+    metadata["timings"] = dict(timings)
+    update_saved_metadata(metadata_path, metadata)
+    postprocessing_finished_at = datetime.now().astimezone().isoformat(
+        timespec="seconds"
+    )
+    print(
+        f"[{postprocessing_finished_at}] completed postprocessing in "
+        f"{timings['postprocessing_wall_s']:.3f} s "
+        f"({format_wall_time(timings['postprocessing_wall_s'])})",
+        flush=True,
+    )
     print(
         f"completed {case.name} {branch} iteration {iteration}: "
         f"dt_ii={dt_s:.4e}s, Ncoll={engine.collision_substeps}, "
         f"Ncharge={engine.charging_substeps}, Nsegments={engine.integration_segments}, "
         f"pair calls={steps}+1 init, "
-        f"max dE/E={relative_field_change:.3%}"
+        f"max dE/E={relative_field_change:.3%}, "
+        f"wall={format_wall_time(timings['total_stage_wall_s'])}"
     )
     return prefix
 
@@ -361,8 +478,24 @@ def run_branch(config, case_index: int, branch: Literal["linear", "quadratic"]):
     constant = artifact_prefix(config, case_index, "constant", 1)
     if not constant.with_suffix(".json").is_file():
         raise FileNotFoundError(f"constant stage must finish first: {constant}")
+    branch_started = time.perf_counter()
+    stored_stage_seconds = 0.0
     for iteration in range(2, config.iterations + 1):
-        run_stage(config, case_index, branch, iteration)
+        prefix = run_stage(config, case_index, branch, iteration)
+        stage_metadata = json.loads(
+            prefix.with_suffix(".json").read_text(encoding="utf-8")
+        )
+        stored_stage_seconds += float(
+            stage_metadata.get("timings", {}).get("total_stage_wall_s", 0.0)
+        )
+    branch_wall = time.perf_counter() - branch_started
+    print(
+        f"completed {ARTICLE_CASES[case_index].name} {branch} branch: "
+        f"current invocation={branch_wall:.3f} s ({format_wall_time(branch_wall)}), "
+        f"sum of stored iteration timings={stored_stage_seconds:.3f} s "
+        f"({format_wall_time(stored_stage_seconds)})",
+        flush=True,
+    )
 
 
 def smoke_config(config: ArticleReproductionConfig) -> ArticleReproductionConfig:
@@ -371,6 +504,7 @@ def smoke_config(config: ArticleReproductionConfig) -> ArticleReproductionConfig
         output_dir=Path(config.output_dir) / "smoke",
         particle_count=64,
         iterations=2,
+        outer_steps=32,
         duration_plasma_periods=0.4,
         burn_in_plasma_periods=0.1,
         force_backend="jax",
@@ -385,7 +519,7 @@ def smoke_config(config: ArticleReproductionConfig) -> ArticleReproductionConfig
         background_minimum_transit_times=0.5,
         background_maximum_transit_times=5.0,
         background_averaging_blocks=1,
-        smoke_project_invalid_fields=True,
+        smoke_project_invalid_fields=False,
     )
 
 
