@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import hashlib
 import json
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
+from opendust_jax.grid_potential import blocked_yukawa_sum
 from opendust_jax.models import PolynomialBackgroundConfig
 
 
@@ -18,17 +21,46 @@ class PolynomialBackground:
     relative_rms_error: float
     sample_count: int
     cache_key: str
+    _device_coefficients: jax.Array | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    @property
+    def device_coefficients(self) -> jax.Array:
+        """Coefficients already resident on the active JAX device when possible."""
+        if self._device_coefficients is not None:
+            return self._device_coefficients
+        return jnp.asarray(self.coefficients, dtype=jnp.float32)
 
 
-def _basis_numpy(rho: np.ndarray, zeta: np.ndarray) -> np.ndarray:
+def _attach_device_coefficients(
+    background: PolynomialBackground, coefficients: jax.Array
+) -> PolynomialBackground:
+    object.__setattr__(background, "_device_coefficients", coefficients)
+    return background
+
+
+def _basis_jax(rho: jax.Array, zeta: jax.Array) -> jax.Array:
     r2, z2 = rho * rho, zeta * zeta
     r4, z4 = r2 * r2, z2 * z2
     r6, z6 = r4 * r2, z4 * z2
-    return np.stack(
+    return jnp.stack(
         (
-            np.ones_like(rho), r2, z2, r2 * z2, r4, z4,
-            r4 * z2, r2 * z4, r6, z6, r4 * z4,
-            r6 * z2, r2 * z6, r4 * r4, z4 * z4,
+            jnp.ones_like(rho),
+            r2,
+            z2,
+            r2 * z2,
+            r4,
+            z4,
+            r4 * z2,
+            r2 * z4,
+            r6,
+            z6,
+            r4 * z4,
+            r6 * z2,
+            r2 * z6,
+            r4 * r4,
+            z4 * z4,
         ),
         axis=-1,
     )
@@ -42,7 +74,7 @@ def _cache_key(
     config: PolynomialBackgroundConfig,
 ) -> str:
     payload = {
-        "version": 1,
+        "version": 2,
         "radius_m": radius_m,
         "height_m": height_m,
         "screening_length_m": screening_length_m,
@@ -65,7 +97,11 @@ def build_polynomial_background(
         radius_m, height_m, screening_length_m, particle_count, config
     )
     if not config.enabled:
-        return PolynomialBackground(np.zeros(15), 0.0, 0, key)
+        coefficients = np.zeros(15)
+        return _attach_device_coefficients(
+            PolynomialBackground(coefficients, 0.0, 0, key),
+            jnp.asarray(coefficients, dtype=jnp.float32),
+        )
 
     cache_path: Path | None = None
     if config.cache_dir is not None:
@@ -74,17 +110,26 @@ def build_polynomial_background(
         cache_path = cache_dir / f"background_{key}.npz"
         if cache_path.is_file():
             data = np.load(cache_path)
-            return PolynomialBackground(
-                np.asarray(data["coefficients"], dtype=np.float64),
-                float(data["relative_rms_error"]),
-                int(data["sample_count"]),
-                key,
+            coefficients = np.asarray(data["coefficients"], dtype=np.float64)
+            return _attach_device_coefficients(
+                PolynomialBackground(
+                    coefficients,
+                    float(data["relative_rms_error"]),
+                    int(data["sample_count"]),
+                    key,
+                ),
+                jnp.asarray(coefficients, dtype=jnp.float32),
             )
 
     radius = radius_m / screening_length_m
     height = height_m / screening_length_m
-    radial_count = max(8, int(np.ceil(radius * config.radial_points_per_screening_length)) + 1)
-    axial_count = max(8, int(np.ceil(0.5 * height * config.axial_points_per_screening_length)) + 1)
+    radial_count = max(
+        8, int(np.ceil(radius * config.radial_points_per_screening_length)) + 1
+    )
+    axial_count = max(
+        8,
+        int(np.ceil(0.5 * height * config.axial_points_per_screening_length)) + 1,
+    )
     grid_r = np.linspace(0.0, radius, radial_count)
     grid_z = np.linspace(0.0, 0.5 * height, axial_count)
     zz, rr = np.meshgrid(grid_z, grid_r, indexing="xy")
@@ -101,20 +146,39 @@ def build_polynomial_background(
         ),
         axis=1,
     )
-    potential = np.zeros(targets.shape[0], dtype=np.float64)
-    for start in range(0, config.sample_count, config.source_block_size):
-        block = sources[start : start + config.source_block_size]
-        displacement = targets[:, None, :] - block[None, :, :]
-        distance = np.linalg.norm(displacement, axis=-1)
-        potential += np.sum(np.exp(-distance) / (distance + 1.0e-3), axis=1)
-    potential /= config.sample_count
+    device_sources, device_targets = jax.device_put(
+        (
+            sources.astype(np.float32, copy=False),
+            targets.astype(np.float32, copy=False),
+        )
+    )
 
-    design = _basis_numpy(rr.ravel(), zz.ravel())
-    normalized_coefficients, *_ = np.linalg.lstsq(design, potential, rcond=None)
-    fitted = design @ normalized_coefficients
-    residual = np.linalg.norm(fitted - potential)
-    relative_rms = float(residual / max(np.linalg.norm(potential), np.finfo(float).tiny))
-    coefficients = -normalized_coefficients * float(particle_count)
+    def fit_on_device(source_positions: jax.Array, target_positions: jax.Array):
+        potential = blocked_yukawa_sum(
+            source_positions,
+            target_positions,
+            1.0,
+            1.0e-3,
+            source_block_size=config.source_block_size,
+        ) / jnp.asarray(config.sample_count, dtype=jnp.float32)
+        design = _basis_jax(target_positions[:, 0], target_positions[:, 2])
+        normalized_coefficients, *_ = jnp.linalg.lstsq(design, potential, rcond=None)
+        fitted = design @ normalized_coefficients
+        residual = jnp.linalg.norm(fitted - potential)
+        scale = jnp.maximum(jnp.linalg.norm(potential), jnp.finfo(jnp.float32).tiny)
+        coefficients = -normalized_coefficients * jnp.asarray(
+            particle_count, dtype=jnp.float32
+        )
+        return coefficients, residual / scale
+
+    device_coefficients, device_relative_rms = jax.jit(fit_on_device)(
+        device_sources, device_targets
+    )
+    host_coefficients, host_relative_rms = jax.device_get(
+        (device_coefficients, device_relative_rms)
+    )
+    coefficients = np.asarray(host_coefficients, dtype=np.float64)
+    relative_rms = float(host_relative_rms)
 
     if cache_path is not None:
         np.savez_compressed(
@@ -123,4 +187,7 @@ def build_polynomial_background(
             relative_rms_error=np.asarray(relative_rms),
             sample_count=np.asarray(config.sample_count),
         )
-    return PolynomialBackground(coefficients, relative_rms, config.sample_count, key)
+    return _attach_device_coefficients(
+        PolynomialBackground(coefficients, relative_rms, config.sample_count, key),
+        device_coefficients,
+    )

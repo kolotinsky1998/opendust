@@ -16,6 +16,7 @@ from opendust_jax.background import build_polynomial_background
 from opendust_jax.checkpoint import load_checkpoint, save_checkpoint
 from opendust_jax.collisions import LegacyChargeExchangeCollision
 from opendust_jax.diagnostics import plane_cic_density_snapshot_m3
+from opendust_jax.grid_potential import blocked_yukawa_sum
 from opendust_jax.models import (
     DustParticleSI,
     FieldDrivenPlasmaSI,
@@ -26,15 +27,15 @@ from opendust_jax.models import (
     SimulationState,
     validate_system,
 )
+from opendust_jax.pair_forces import softened_yukawa_forces
 from opendust_jax.physics import (
     COULOMB_CONSTANT,
     dust_orbit_forces_N,
     ion_dust_coulomb_forces_N,
-    shifted_oml_ion_flux_m2_s,
     polynomial_value_and_gradient,
+    shifted_oml_ion_flux_m2_s,
 )
 from opendust_jax.simulation import OpenDustJAX
-from opendust_jax.pair_forces import softened_yukawa_forces
 
 
 def plasma():
@@ -150,15 +151,93 @@ def test_cic_conserves_superion_weight_in_slice():
     np.testing.assert_allclose(np.sum(np.asarray(density)) * dx * dz * thickness, 8.0)
 
 
+@pytest.mark.parametrize(
+    ("source_count", "target_count", "source_block_size", "target_block_size"),
+    [(1, 1, 4, 3), (5, 3, 2, 2), (7, 5, 4, 3)],
+)
+def test_blocked_yukawa_sum_matches_numpy_reference(
+    source_count, target_count, source_block_size, target_block_size
+):
+    rng = np.random.default_rng(12)
+    sources = rng.normal(size=(source_count, 3)).astype(np.float32)
+    targets = rng.normal(size=(target_count, 3)).astype(np.float32)
+    screening, softening = 0.7, 0.03
+    distance = np.linalg.norm(
+        targets[:, None, :].astype(np.float64)
+        - sources[None, :, :].astype(np.float64),
+        axis=-1,
+    )
+    expected = np.sum(
+        np.exp(-distance / screening) / (distance + softening), axis=1
+    )
+    actual = blocked_yukawa_sum(
+        sources,
+        targets,
+        screening,
+        softening,
+        source_block_size=source_block_size,
+        target_block_size=target_block_size,
+    )
+    np.testing.assert_allclose(np.asarray(actual), expected, rtol=2e-6, atol=2e-6)
+
+
 def test_background_fit_is_deterministic_and_cacheable(tmp_path):
     config = PolynomialBackgroundConfig(
         seed=4, sample_count=256, source_block_size=64, cache_dir=tmp_path
     )
-    first = build_polynomial_background(1.0, 2.0, 0.5, 32, config)
-    second = build_polynomial_background(1.0, 2.0, 0.5, 32, config)
+    radius_m, height_m, screening_length_m, particle_count = 0.25, 0.5, 0.5, 32
+    first = build_polynomial_background(
+        radius_m, height_m, screening_length_m, particle_count, config
+    )
+    second = build_polynomial_background(
+        radius_m, height_m, screening_length_m, particle_count, config
+    )
     np.testing.assert_array_equal(first.coefficients, second.coefficients)
     assert first.cache_key == second.cache_key
     assert np.isfinite(first.relative_rms_error)
+    assert first._device_coefficients is not None
+    assert second._device_coefficients is not None
+    assert {device.platform for device in first.device_coefficients.devices()} == {
+        jax.default_backend()
+    }
+
+    radius, height = radius_m / screening_length_m, height_m / screening_length_m
+    grid_r = np.linspace(0.0, radius, 8)
+    grid_z = np.linspace(0.0, 0.5 * height, 8)
+    zz, rr = np.meshgrid(grid_z, grid_r, indexing="xy")
+    targets = np.stack((rr.ravel(), np.zeros(rr.size), zz.ravel()), axis=1)
+    rng = np.random.default_rng(config.seed)
+    source_r = radius * np.sqrt(rng.random(config.sample_count))
+    source_theta = 2.0 * np.pi * rng.random(config.sample_count)
+    sources = np.stack(
+        (
+            source_r * np.cos(source_theta),
+            source_r * np.sin(source_theta),
+            height * (rng.random(config.sample_count) - 0.5),
+        ),
+        axis=1,
+    )
+    distance = np.linalg.norm(targets[:, None, :] - sources[None, :, :], axis=-1)
+    potential = np.sum(np.exp(-distance) / (distance + 1.0e-3), axis=1)
+    potential /= config.sample_count
+    r2, z2 = rr.ravel() ** 2, zz.ravel() ** 2
+    r4, z4 = r2**2, z2**2
+    r6, z6 = r4 * r2, z4 * z2
+    design = np.stack(
+        (
+            np.ones_like(r2), r2, z2, r2 * z2, r4, z4,
+            r4 * z2, r2 * z4, r6, z6, r4 * z4,
+            r6 * z2, r2 * z6, r4**2, z4**2,
+        ),
+        axis=-1,
+    )
+    expected, *_ = np.linalg.lstsq(design, potential, rcond=None)
+    np.testing.assert_allclose(
+        first.coefficients,
+        -expected * particle_count,
+        rtol=3e-2,
+        atol=3e-3,
+    )
 
 
 def test_overlapping_dust_is_rejected():

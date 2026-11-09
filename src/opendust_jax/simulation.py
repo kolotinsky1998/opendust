@@ -293,7 +293,7 @@ class OpenDustJAX:
             (
                 np.zeros(15)
                 if isinstance(self.background, CylindricalSplineBackground)
-                else self.background.coefficients
+                else self.background.device_coefficients
             ),
             dtype=jnp.float32,
         )

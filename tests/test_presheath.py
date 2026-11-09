@@ -20,6 +20,7 @@ from opendust_jax.collisions import (
     load_argon_cross_sections,
 )
 from opendust_jax.models import (
+    COULOMB_CONSTANT,
     ArgonPresheathPlasmaSI,
     CollisionSubcyclingConfig,
     PolynomialBackgroundConfig,
@@ -27,16 +28,17 @@ from opendust_jax.models import (
     QuadraticElectricFieldSI,
     SimulationConfigSI,
 )
-from opendust_jax.simulation import OpenDustJAX
-from opendust_jax.timestepping import resolve_collision_substeps
 from opendust_jax.presheath import (
     CylindricalSplineBackground,
     _axisymmetric_node_density,
+    _direct_potential,
     cylindrical_cubic_value_and_gradient,
     load_presheath_background,
-    save_presheath_background,
     prepare_presheath_background,
+    save_presheath_background,
 )
+from opendust_jax.simulation import OpenDustJAX
+from opendust_jax.timestepping import resolve_collision_substeps
 
 
 def _cylindrical_node_volumes(r, z, radius, height):
@@ -187,6 +189,9 @@ def test_presheath_background_round_trip(tmp_path):
     assert restored.metadata == {"case": "test"}
     np.testing.assert_array_equal(restored.axial_flux_m2_s, axial_flux)
     np.testing.assert_array_equal(restored.axial_velocity_m_s, axial_flux)
+    assert restored._device_r_m is not None
+    assert restored._device_z_m is not None
+    assert restored._device_potential_V is not None
     assert json_path.is_file()
 
 
@@ -201,11 +206,43 @@ def test_axisymmetric_density_and_flux_preserve_particle_totals():
         positions, r, z, weight, radius, height, particle_values=velocities
     )
     volumes = _cylindrical_node_volumes(r, z, radius, height)
-    assert np.sum(density * volumes) == pytest.approx(len(positions) * weight)
-    assert np.sum(flux * volumes) == pytest.approx(np.sum(velocities) * weight)
+    density = np.asarray(density)
+    flux = np.asarray(flux)
+    assert np.sum(density * volumes) == pytest.approx(
+        len(positions) * weight, rel=2e-6
+    )
+    assert np.sum(flux * volumes) == pytest.approx(
+        np.sum(velocities) * weight, rel=2e-6
+    )
     velocity = np.divide(flux, density, out=np.zeros_like(flux), where=density > 0)
     expected = np.divide(flux, density, out=np.zeros_like(flux), where=density > 0)
     np.testing.assert_allclose(velocity[density > 0], expected[density > 0])
+
+
+def test_presheath_direct_potential_matches_numpy_reference():
+    positions = np.asarray(
+        [[0.1, -0.2, 0.3], [0.4, 0.2, -0.1], [-0.3, 0.1, 0.2]],
+        dtype=np.float32,
+    )
+    targets = np.asarray(
+        [[0.0, 0.0, -0.5], [0.2, 0.0, 0.0], [0.0, 0.0, 0.5]],
+        dtype=np.float32,
+    )
+    charge, screening, softening = 2.0e-16, 0.8, 0.01
+    distance = np.linalg.norm(
+        targets[:, None, :].astype(np.float64)
+        - positions[None, :, :].astype(np.float64),
+        axis=-1,
+    )
+    expected = (
+        COULOMB_CONSTANT
+        * charge
+        * np.sum(np.exp(-distance / screening) / (distance + softening), axis=1)
+    ).reshape(3, 1)
+    actual = _direct_potential(
+        positions, targets, (3, 1), charge, screening, softening, block_size=2
+    )
+    np.testing.assert_allclose(np.asarray(actual), expected, rtol=3e-6, atol=1e-12)
 
 
 def test_presheath_production_path_runs_with_matching_background():
@@ -247,7 +284,7 @@ def test_presheath_production_path_runs_with_matching_background():
         )
 
 
-def test_prepare_then_run_small_presheath_case(tmp_path):
+def test_prepare_then_run_small_presheath_case(tmp_path, monkeypatch):
     plasma = ArgonPresheathPlasmaSI(
         300.0,
         30_000.0,
@@ -283,9 +320,26 @@ def test_prepare_then_run_small_presheath_case(tmp_path):
         averaging_blocks=1,
         source_block_size=16,
     )
+    transferred_shapes = []
+    real_device_get = jax.device_get
+
+    def recording_device_get(value):
+        transferred_shapes.extend(
+            getattr(leaf, "shape", None) for leaf in jax.tree_util.tree_leaves(value)
+        )
+        return real_device_get(value)
+
+    monkeypatch.setattr(jax, "device_get", recording_device_get)
     background = prepare_presheath_background(plasma, preparation, equilibration)
     assert background.density_m3.shape == background.potential_V.shape
     assert np.all(np.isfinite(background.potential_V))
+    assert (common["particle_count"], 3) not in transferred_shapes
+    assert background._device_r_m is not None
+    assert background._device_z_m is not None
+    assert background._device_potential_V is not None
+    assert {
+        device.platform for device in background._device_potential_V.devices()
+    } == {jax.default_backend()}
     cached = prepare_presheath_background(plasma, preparation, equilibration)
     assert cached.fingerprint == background.fingerprint
     np.testing.assert_array_equal(cached.potential_V, background.potential_V)

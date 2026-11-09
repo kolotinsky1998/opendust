@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
-from pathlib import Path
 import platform
+from dataclasses import asdict
+from pathlib import Path
 
 import jax
-from jax.extend import backend as jax_backend
 import jax.numpy as jnp
 import numpy as np
+from jax.extend import backend as jax_backend
 
+from opendust_jax.grid_potential import blocked_yukawa_sum
 from opendust_jax.models import COULOMB_CONSTANT, PlaneDiagnosticConfig
 from opendust_jax.physics import background_potential_V
 
@@ -51,62 +52,14 @@ def plane_potential_snapshot_V(
     targets = jnp.stack(
         (xx.ravel(), jnp.zeros(xx.size, dtype=jnp.float32), zz.ravel()), axis=1
     )
-    n_sources = positions.shape[0]
-    n_targets = targets.shape[0]
-    source_blocks = (n_sources + source_block_size - 1) // source_block_size
-    target_blocks = (n_targets + target_block_size - 1) // target_block_size
-    padded_sources = jnp.pad(
-        positions, ((0, source_blocks * source_block_size - n_sources), (0, 0))
+    ion_sum = blocked_yukawa_sum(
+        positions,
+        targets,
+        screening_length_m,
+        softening_m,
+        source_block_size=source_block_size,
+        target_block_size=target_block_size,
     )
-    padded_targets = jnp.pad(
-        targets, ((0, target_blocks * target_block_size - n_targets), (0, 0))
-    )
-
-    def target_body(target_index: int, output: jax.Array) -> jax.Array:
-        target_start = target_index * target_block_size
-        target_zero = jnp.asarray(0, dtype=target_start.dtype)
-        target = jax.lax.dynamic_slice(
-            padded_targets, (target_start, target_zero), (target_block_size, 3)
-        )
-
-        def source_body(source_index: int, partial: jax.Array) -> jax.Array:
-            source_start = source_index * source_block_size
-            source_zero = jnp.asarray(0, dtype=source_start.dtype)
-            source = jax.lax.dynamic_slice(
-                padded_sources,
-                (source_start, source_zero),
-                (source_block_size, 3),
-            )
-            valid = (
-                source_start
-                + jnp.arange(source_block_size, dtype=source_start.dtype)
-                < n_sources
-            )
-            displacement = target[:, None, :] - source[None, :, :]
-            distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
-            contribution = jnp.exp(-distance / screening_length_m) / (
-                distance + softening_m
-            )
-            return partial + jnp.sum(
-                jnp.where(
-                    valid[None, :],
-                    contribution,
-                    jnp.asarray(0.0, dtype=jnp.float32),
-                ),
-                axis=1,
-            )
-
-        values = jax.lax.fori_loop(
-            0, source_blocks, source_body, jnp.zeros(target_block_size, jnp.float32)
-        )
-        return jax.lax.dynamic_update_slice(output, values, (target_start,))
-
-    ion_sum = jax.lax.fori_loop(
-        0,
-        target_blocks,
-        target_body,
-        jnp.zeros(target_blocks * target_block_size, jnp.float32),
-    )[:n_targets]
     ion_potential = (
         jnp.asarray(COULOMB_CONSTANT, dtype=jnp.float32)
         * superion_charge_C

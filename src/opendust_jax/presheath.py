@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import hashlib
 import json
 import math
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import jax
@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from opendust_jax.collisions import ArgonNullCollisionModel
+from opendust_jax.grid_potential import blocked_yukawa_sum
 from opendust_jax.models import (
     COULOMB_CONSTANT,
     ELEMENTARY_CHARGE_C,
@@ -36,6 +37,15 @@ class CylindricalSplineBackground:
     convergence_history: np.ndarray
     metadata: dict
     axial_flux_m2_s: np.ndarray | None = None
+    _device_r_m: jax.Array | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _device_z_m: jax.Array | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _device_potential_V: jax.Array | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     @property
     def axial_velocity_m_s(self) -> np.ndarray:
@@ -54,14 +64,32 @@ class CylindricalSplineBackground:
     ) -> tuple[jax.Array, jax.Array]:
         return cylindrical_cubic_value_and_gradient(
             positions_m,
-            jnp.asarray(self.r_m, jnp.float32),
-            jnp.asarray(self.z_m, jnp.float32),
-            jnp.asarray(self.potential_V, jnp.float32),
+            self._device_r_m
+            if self._device_r_m is not None
+            else jnp.asarray(self.r_m, jnp.float32),
+            self._device_z_m
+            if self._device_z_m is not None
+            else jnp.asarray(self.z_m, jnp.float32),
+            self._device_potential_V
+            if self._device_potential_V is not None
+            else jnp.asarray(self.potential_V, jnp.float32),
         )
 
     def force_N(self, positions_m: jax.Array, charges_C: float | jax.Array) -> jax.Array:
         _, gradient = self.potential_and_gradient(positions_m)
         return -jnp.asarray(charges_C)[..., None] * gradient
+
+
+def _attach_device_background(
+    background: CylindricalSplineBackground,
+    r_m: jax.Array,
+    z_m: jax.Array,
+    potential_V: jax.Array,
+) -> CylindricalSplineBackground:
+    object.__setattr__(background, "_device_r_m", r_m)
+    object.__setattr__(background, "_device_z_m", z_m)
+    object.__setattr__(background, "_device_potential_V", potential_V)
+    return background
 
 
 def _cubic_weights(t: jax.Array) -> tuple[jax.Array, jax.Array]:
@@ -126,7 +154,7 @@ def _fingerprint(
     collision_dt_s: float,
 ) -> str:
     payload = {
-        "format_version": 1,
+        "format_version": 2,
         "plasma": asdict(plasma),
         "geometry": {
             "radius_m": simulation.radius_m,
@@ -213,16 +241,33 @@ def load_presheath_background(path: Path | str) -> CylindricalSplineBackground:
             if "axial_flux_m2_s" in data.files
             else np.zeros_like(density)
         )
-        return CylindricalSplineBackground(
-            r_m=np.asarray(data["r_m"], dtype=np.float64),
-            z_m=np.asarray(data["z_m"], dtype=np.float64),
-            density_m3=density,
-            ion_potential_V=np.asarray(data["ion_potential_V"], dtype=np.float64),
-            potential_V=np.asarray(data["potential_V"], dtype=np.float64),
-            fingerprint=str(data["fingerprint"]),
-            convergence_history=np.asarray(data["convergence_history"], dtype=np.float64),
-            metadata=json.loads(str(data["metadata_json"])),
-            axial_flux_m2_s=axial_flux,
+        r_m = np.asarray(data["r_m"], dtype=np.float64)
+        z_m = np.asarray(data["z_m"], dtype=np.float64)
+        potential = np.asarray(data["potential_V"], dtype=np.float64)
+        device_r, device_z, device_potential = jax.device_put(
+            (
+                r_m.astype(np.float32),
+                z_m.astype(np.float32),
+                potential.astype(np.float32),
+            )
+        )
+        return _attach_device_background(
+            CylindricalSplineBackground(
+                r_m=r_m,
+                z_m=z_m,
+                density_m3=density,
+                ion_potential_V=np.asarray(data["ion_potential_V"], dtype=np.float64),
+                potential_V=potential,
+                fingerprint=str(data["fingerprint"]),
+                convergence_history=np.asarray(
+                    data["convergence_history"], dtype=np.float64
+                ),
+                metadata=json.loads(str(data["metadata_json"])),
+                axial_flux_m2_s=axial_flux,
+            ),
+            device_r,
+            device_z,
+            device_potential,
         )
 
 
@@ -251,53 +296,72 @@ def _relative_change(current: np.ndarray, previous: np.ndarray) -> float:
 
 
 def _direct_potential(
-    positions_m: np.ndarray,
-    r_m: np.ndarray,
-    z_m: np.ndarray,
+    positions_m: jax.Array,
+    targets_m: jax.Array,
+    grid_shape: tuple[int, int],
     charge_C: float,
     screening_length_m: float,
     softening_m: float,
     block_size: int,
-) -> np.ndarray:
-    rr, zz = np.meshgrid(r_m, z_m, indexing="xy")
-    targets = np.stack((rr.ravel(), np.zeros(rr.size), zz.ravel()), axis=1)
-    result = np.zeros(targets.shape[0], dtype=np.float64)
-    for start in range(0, len(positions_m), block_size):
-        block = positions_m[start : start + block_size]
-        distance = np.linalg.norm(targets[:, None, :] - block[None, :, :], axis=-1)
-        result += np.sum(np.exp(-distance / screening_length_m) / (distance + softening_m), axis=1)
-    return (COULOMB_CONSTANT * charge_C * result).reshape((len(z_m), len(r_m)))
+) -> jax.Array:
+    result = blocked_yukawa_sum(
+        positions_m,
+        targets_m,
+        screening_length_m,
+        softening_m,
+        source_block_size=block_size,
+    )
+    return (
+        jnp.asarray(COULOMB_CONSTANT * charge_C, dtype=jnp.float32) * result
+    ).reshape(grid_shape)
 
 
 def _axisymmetric_node_density(
-    positions_m: np.ndarray,
-    r_m: np.ndarray,
-    z_m: np.ndarray,
+    positions_m: jax.Array,
+    r_m: jax.Array,
+    z_m: jax.Array,
     superion_weight: float,
     radius_m: float,
     height_m: float,
-    particle_values: np.ndarray | None = None,
-) -> np.ndarray:
-    radial = np.linalg.norm(positions_m[:, :2], axis=1)
+    particle_values: jax.Array | None = None,
+) -> jax.Array:
+    radial = jnp.linalg.norm(positions_m[:, :2], axis=1)
     dr, dz = r_m[1] - r_m[0], z_m[1] - z_m[0]
-    gr = np.clip(radial / dr, 0.0, len(r_m) - 1.0)
-    gz = np.clip((positions_m[:, 2] - z_m[0]) / dz, 0.0, len(z_m) - 1.0)
-    ir = np.minimum(np.floor(gr).astype(int), len(r_m) - 2)
-    iz = np.minimum(np.floor(gz).astype(int), len(z_m) - 2)
+    gr = jnp.clip(radial / dr, 0.0, len(r_m) - 1.0)
+    gz = jnp.clip((positions_m[:, 2] - z_m[0]) / dz, 0.0, len(z_m) - 1.0)
+    ir = jnp.minimum(jnp.floor(gr).astype(jnp.int32), len(r_m) - 2)
+    iz = jnp.minimum(jnp.floor(gz).astype(jnp.int32), len(z_m) - 2)
     tr, tz = gr - ir, gz - iz
-    weights = np.zeros((len(z_m), len(r_m)), dtype=np.float64)
-    values = np.ones(len(positions_m)) if particle_values is None else particle_values
-    np.add.at(weights, (iz, ir), values * (1.0 - tr) * (1.0 - tz))
-    np.add.at(weights, (iz, ir + 1), values * tr * (1.0 - tz))
-    np.add.at(weights, (iz + 1, ir), values * (1.0 - tr) * tz)
-    np.add.at(weights, (iz + 1, ir + 1), values * tr * tz)
-    r_edges = np.concatenate(([0.0], 0.5 * (r_m[1:] + r_m[:-1]), [radius_m]))
-    z_edges = np.concatenate(([-0.5 * height_m], 0.5 * (z_m[1:] + z_m[:-1]), [0.5 * height_m]))
-    volumes = (
-        math.pi * (r_edges[1:] ** 2 - r_edges[:-1] ** 2)[None, :]
-        * np.diff(z_edges)[:, None]
+    values = (
+        jnp.ones(positions_m.shape[0], dtype=jnp.float32)
+        if particle_values is None
+        else jnp.asarray(particle_values, dtype=jnp.float32)
     )
-    return weights * superion_weight / volumes
+    weights = jnp.zeros((len(z_m), len(r_m)), dtype=jnp.float32)
+    weights = weights.at[iz, ir].add(values * (1.0 - tr) * (1.0 - tz))
+    weights = weights.at[iz, ir + 1].add(values * tr * (1.0 - tz))
+    weights = weights.at[iz + 1, ir].add(values * (1.0 - tr) * tz)
+    weights = weights.at[iz + 1, ir + 1].add(values * tr * tz)
+    r_edges = jnp.concatenate(
+        (
+            jnp.asarray([0.0], jnp.float32),
+            0.5 * (r_m[1:] + r_m[:-1]),
+            jnp.asarray([radius_m], jnp.float32),
+        )
+    )
+    z_edges = jnp.concatenate(
+        (
+            jnp.asarray([-0.5 * height_m], jnp.float32),
+            0.5 * (z_m[1:] + z_m[:-1]),
+            jnp.asarray([0.5 * height_m], jnp.float32),
+        )
+    )
+    volumes = (
+        jnp.asarray(math.pi, jnp.float32)
+        * (r_edges[1:] ** 2 - r_edges[:-1] ** 2)[None, :]
+        * jnp.diff(z_edges)[:, None]
+    )
+    return weights * jnp.asarray(superion_weight, jnp.float32) / volumes
 
 
 def prepare_presheath_background(
@@ -412,25 +476,39 @@ def prepare_presheath_background(
         return final
 
     transit_time = simulation.height_m / plasma.flow_speed_m_s
-    block_steps = max(1, int(math.ceil(config.block_transit_times * transit_time / simulation.dt_s)))
-    minimum_steps = int(math.ceil(config.minimum_transit_times * transit_time / simulation.dt_s))
-    maximum_steps = int(math.ceil(config.maximum_transit_times * transit_time / simulation.dt_s))
+    block_steps = max(
+        1, int(math.ceil(config.block_transit_times * transit_time / simulation.dt_s))
+    )
+    minimum_steps = int(
+        math.ceil(config.minimum_transit_times * transit_time / simulation.dt_s)
+    )
+    maximum_steps = int(
+        math.ceil(config.maximum_transit_times * transit_time / simulation.dt_s)
+    )
     compiled_blocks: dict[int, object] = {}
 
-    def execute(steps: int):
+    def execute_device(steps: int):
         nonlocal positions, velocities, key
         if steps not in compiled_blocks:
-            compiled_blocks[steps] = jax.jit(lambda carry, _steps=steps: run_block(carry, _steps))
+            compiled_blocks[steps] = jax.jit(
+                lambda carry, _steps=steps: run_block(carry, _steps)
+            )
         final = compiled_blocks[steps]((positions, velocities, key))
         positions, velocities, key = final[0], final[1], final[2]
         if int(np.asarray(jax.device_get(final[5]))) > 0:
             raise RuntimeError("Ar+/Ar collision energy exceeded the 10 keV table range")
-        return np.asarray(jax.device_get(final[3])), np.asarray(jax.device_get(final[4]))
+        return final
+
+    def execute_for_convergence(steps: int):
+        final = execute_device(steps)
+        return np.asarray(jax.device_get(final[3])), np.asarray(
+            jax.device_get(final[4])
+        )
 
     completed = 0
     while completed < minimum_steps:
         steps = min(block_steps, minimum_steps - completed)
-        execute(steps)
+        execute_device(steps)
         completed += steps
 
     previous_density = previous_flux = None
@@ -438,7 +516,7 @@ def prepare_presheath_background(
     history: list[tuple[float, float, float]] = []
     while completed < maximum_steps and consecutive < config.consecutive_blocks:
         steps = min(block_steps, maximum_steps - completed)
-        density, flux = execute(steps)
+        density, flux = execute_for_convergence(steps)
         completed += steps
         samples = float(steps * collision_substeps)
         density = density / samples
@@ -465,37 +543,73 @@ def prepare_presheath_background(
     nz = max(4, int(math.ceil(simulation.height_m / spacing)) + 1)
     r_axis = np.linspace(0.0, simulation.radius_m, nr)
     z_axis = np.linspace(-0.5 * simulation.height_m, 0.5 * simulation.height_m, nz)
+    device_r_axis, device_z_axis = jax.device_put(
+        (r_axis.astype(np.float32), z_axis.astype(np.float32))
+    )
+    rr, zz = jnp.meshgrid(device_r_axis, device_z_axis, indexing="xy")
+    potential_targets = jnp.stack(
+        (rr.ravel(), jnp.zeros(rr.size, dtype=jnp.float32), zz.ravel()), axis=1
+    )
     volume = math.pi * simulation.radius_m**2 * simulation.height_m
     superion_weight = plasma.reference_density_m3 * volume / count
     superion_charge = ELEMENTARY_CHARGE_C * superion_weight
-    density_accum = np.zeros((nz, nr), dtype=np.float64)
-    axial_flux_accum = np.zeros((nz, nr), dtype=np.float64)
-    potential_accum = np.zeros((nz, nr), dtype=np.float64)
+    density_accum = jnp.zeros((nz, nr), dtype=jnp.float32)
+    axial_flux_accum = jnp.zeros((nz, nr), dtype=jnp.float32)
+    potential_accum = jnp.zeros((nz, nr), dtype=jnp.float32)
+
+    @jax.jit
+    def sample_fields(sample_positions: jax.Array, sample_velocities: jax.Array):
+        density = _axisymmetric_node_density(
+            sample_positions,
+            device_r_axis,
+            device_z_axis,
+            superion_weight,
+            simulation.radius_m,
+            simulation.height_m,
+            jnp.ones(sample_positions.shape[0], dtype=jnp.float32),
+        )
+        axial_flux = _axisymmetric_node_density(
+            sample_positions,
+            device_r_axis,
+            device_z_axis,
+            superion_weight,
+            simulation.radius_m,
+            simulation.height_m,
+            sample_velocities[:, 2],
+        )
+        potential = _direct_potential(
+            sample_positions,
+            potential_targets,
+            (nz, nr),
+            superion_charge,
+            plasma.screening_length_m,
+            softening,
+            config.source_block_size,
+        )
+        return density, axial_flux, potential
+
     for _ in range(config.averaging_blocks):
-        execute(block_steps)
-        host_positions = np.asarray(jax.device_get(positions))
-        host_velocities = np.asarray(jax.device_get(velocities))
-        density_accum += _axisymmetric_node_density(
-            host_positions,
-            r_axis,
-            z_axis,
-            superion_weight,
-            simulation.radius_m,
-            simulation.height_m,
+        execute_device(block_steps)
+        density, axial_flux, potential = sample_fields(positions, velocities)
+        density_accum += density
+        axial_flux_accum += axial_flux
+        potential_accum += potential
+    divisor = jnp.asarray(config.averaging_blocks, dtype=jnp.float32)
+    device_density_mean = density_accum / divisor
+    device_axial_flux_mean = axial_flux_accum / divisor
+    device_ion_potential = potential_accum / divisor
+    device_background_potential = -device_ion_potential
+    density_mean, axial_flux_mean, ion_potential, background_potential = (
+        np.asarray(value, dtype=np.float64)
+        for value in jax.device_get(
+            (
+                device_density_mean,
+                device_axial_flux_mean,
+                device_ion_potential,
+                device_background_potential,
+            )
         )
-        axial_flux_accum += _axisymmetric_node_density(
-            host_positions,
-            r_axis,
-            z_axis,
-            superion_weight,
-            simulation.radius_m,
-            simulation.height_m,
-            particle_values=host_velocities[:, 2],
-        )
-        potential_accum += _direct_potential(host_positions, r_axis, z_axis, superion_charge, plasma.screening_length_m, softening, config.source_block_size)
-    density_mean = density_accum / config.averaging_blocks
-    axial_flux_mean = axial_flux_accum / config.averaging_blocks
-    ion_potential = potential_accum / config.averaging_blocks
+    )
     metadata = {
         "plasma": asdict(plasma),
         "simulation": asdict(simulation),
@@ -511,16 +625,21 @@ def prepare_presheath_background(
             "dt_collision_s": collision_dt_s,
         },
     }
-    background = CylindricalSplineBackground(
-        r_m=r_axis,
-        z_m=z_axis,
-        density_m3=density_mean,
-        ion_potential_V=ion_potential,
-        potential_V=-ion_potential,
-        fingerprint=fingerprint,
-        convergence_history=np.asarray(history, dtype=np.float64),
-        metadata=metadata,
-        axial_flux_m2_s=axial_flux_mean,
+    background = _attach_device_background(
+        CylindricalSplineBackground(
+            r_m=r_axis,
+            z_m=z_axis,
+            density_m3=density_mean,
+            ion_potential_V=ion_potential,
+            potential_V=background_potential,
+            fingerprint=fingerprint,
+            convergence_history=np.asarray(history, dtype=np.float64),
+            metadata=metadata,
+            axial_flux_m2_s=axial_flux_mean,
+        ),
+        device_r_axis,
+        device_z_axis,
+        device_background_potential,
     )
     save_presheath_background(background, config.output_prefix)
     return background
