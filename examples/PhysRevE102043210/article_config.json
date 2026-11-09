@@ -17,6 +17,7 @@
   "background_flux_tolerance": 0.02,
   "background_consecutive_blocks": 3,
   "background_minimum_transit_times": 4.0,
+  "background_block_transit_times": 10.0,
   "background_maximum_transit_times": 100.0,
   "background_averaging_blocks": 10,
   "smoke_project_invalid_fields": false

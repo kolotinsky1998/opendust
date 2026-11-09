@@ -169,6 +169,9 @@ def run_profile(
             flux_tolerance=float(raw["background_flux_tolerance"]),
             consecutive_blocks=int(raw["background_consecutive_blocks"]),
             minimum_transit_times=float(raw["background_minimum_transit_times"]),
+            block_transit_times=float(
+                raw.get("background_block_transit_times", 10.0)
+            ),
             maximum_transit_times=float(raw["background_maximum_transit_times"]),
             averaging_blocks=int(raw["background_averaging_blocks"]),
             source_block_size=min(4096, particle_count),
