@@ -108,6 +108,11 @@ the stationary density, ion potential, compensating cubic-interpolated
 potential, and convergence history to NPZ/JSON. See
 `examples/NonUniformPresheath` for a complete configuration.
 
+`ArgonNullCollisionModel` accepts an optional
+`maximum_relative_speed_m_s` for a bounded null-collision majorant. This is
+useful for a dedicated preparation grid; leaving it unset preserves the full
+10 keV table majorant used by production.
+
 ### Collision and charging subcycling
 
 The expensive ion-ion force can be updated on an outer step while neutral

@@ -18,6 +18,7 @@ from opendust_jax.collisions import (
     ArgonNullCollisionModel,
     elastic_scatter_equal_mass,
     load_argon_cross_sections,
+    presheath_preparation_speed_limit_m_s,
 )
 from opendust_jax.models import (
     COULOMB_CONSTANT,
@@ -32,6 +33,7 @@ from opendust_jax.presheath import (
     CylindricalSplineBackground,
     _axisymmetric_node_density,
     _direct_potential,
+    _profile_sampling_schedule,
     cylindrical_cubic_value_and_gradient,
     load_presheath_background,
     prepare_presheath_background,
@@ -124,6 +126,73 @@ def test_argon_collision_substeps_use_null_majorant_limit():
     assert dt_collision <= limit
     assert frequency == pytest.approx(model.maximum_frequency_s)
     assert returned_limit == pytest.approx(limit)
+
+
+def test_bounded_preparation_majorant_uses_two_sound_plus_six_thermal_speeds():
+    plasma = ArgonPresheathPlasmaSI(
+        neutral_temperature_K=290.0,
+        electron_temperature_K=58_022.0,
+        reference_density_m3=1.0e14,
+        pressure_Pa=19.9984,
+        inlet_mach=0.3,
+        electric_field=QuadraticElectricFieldSI(
+            1000.0, enforce_presheath_constraints=False
+        ),
+    )
+    speed_limit = presheath_preparation_speed_limit_m_s(plasma)
+    model = ArgonNullCollisionModel(
+        plasma, maximum_relative_speed_m_s=speed_limit
+    )
+    assert speed_limit == pytest.approx(8424.253976610902)
+    assert model.maximum_majorant_energy_eV == pytest.approx(7.345758053432533)
+    assert model.maximum_frequency_s == pytest.approx(2.0140937e7, rel=2e-6)
+    limit = -math.log(0.9) / model.maximum_frequency_s
+    assert limit == pytest.approx(5.2311625e-9, rel=2e-6)
+    full = ArgonNullCollisionModel(plasma)
+    assert full.maximum_relative_speed_m_s is None
+    assert full.maximum_majorant_energy_eV == pytest.approx(10_000.0)
+    assert full.maximum_frequency_s > 10.0 * model.maximum_frequency_s
+
+
+def test_bounded_majorant_saturates_and_reports_faster_particles():
+    model = ArgonNullCollisionModel(
+        argon_plasma(), maximum_relative_speed_m_s=500.0
+    )
+    dt = -math.log(0.9) / model.maximum_frequency_s
+    velocities = jnp.tile(jnp.asarray([[3000.0, 0.0, 0.0]], jnp.float32), (4096, 1))
+    _, events = model.apply(jax.random.PRNGKey(27), velocities, 1.0, dt)
+    assert np.mean(np.asarray(events.majorant_exceeded)) > 0.99
+    assert 0.07 < np.mean(np.asarray(events.candidates)) < 0.13
+
+
+def test_sampling_window_expands_to_plasma_period_when_transit_is_short(tmp_path):
+    plasma = argon_plasma(pressure=0.1)
+    simulation = SimulationConfigSI(
+        radius_m=0.001,
+        height_m=0.001,
+        particle_count=8,
+        steps=0,
+        dt_s=1.0e-9,
+        force_backend="jax",
+    )
+    config = PresheathEquilibrationConfig(
+        output_prefix=tmp_path / "sampling",
+        minimum_transit_times=0.1,
+        maximum_transit_times=10.0,
+    )
+    (
+        period,
+        _,
+        interval_steps,
+        resolved_interval,
+        window_steps,
+        window,
+    ) = _profile_sampling_schedule(plasma, simulation, config)
+    transit = simulation.height_m / plasma.flow_speed_m_s
+    assert transit < period
+    assert resolved_interval >= period
+    assert window >= resolved_interval
+    assert window_steps % interval_steps == 0
 
 
 def test_collision_operator_flags_energy_above_table_range():
@@ -319,6 +388,7 @@ def test_prepare_then_run_small_presheath_case(tmp_path, monkeypatch):
         maximum_transit_times=0.5,
         averaging_blocks=1,
         source_block_size=16,
+        sampling_interval_plasma_periods=0.001,
     )
     transferred_shapes = []
     real_device_get = jax.device_get
@@ -347,6 +417,14 @@ def test_prepare_then_run_small_presheath_case(tmp_path, monkeypatch):
     assert background.metadata["collision_subcycling"]["dt_collision_s"] == pytest.approx(
         common["dt_s"] / 2
     )
+    sampling = background.metadata["profile_sampling"]
+    assert sampling["resolved_interval_steps"] >= 1
+    assert sampling["convergence_window_s"] >= sampling["resolved_interval_s"]
+    assert sampling["samples_per_window"] == (
+        sampling["convergence_window_steps"]
+        // sampling["resolved_interval_steps"]
+    )
+    assert sampling["convergence_sample_count"] < background.metadata["completed_steps"]
     production = SimulationConfigSI(
         steps=1,
         collision_subcycling=collision_subcycling,
@@ -358,6 +436,7 @@ def test_prepare_then_run_small_presheath_case(tmp_path, monkeypatch):
     assert int(result.final_state.step) == 1
     assert result.collision_statistics.operator_call_count == 2
 
-    incompatible = SimulationConfigSI(steps=1, **common)
-    with pytest.raises(ValueError, match="collision_subcycling does not match"):
-        OpenDustJAX(plasma, incompatible, background=background)
+    different_schedule = SimulationConfigSI(steps=1, dt_s=2.0e-8, **{
+        key: value for key, value in common.items() if key != "dt_s"
+    })
+    OpenDustJAX(plasma, different_schedule, background=background)

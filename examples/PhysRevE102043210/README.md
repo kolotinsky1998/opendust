@@ -49,6 +49,12 @@ resolves the null-collision majorant inside each outer step, while
 `ChargingSubcyclingConfig()` chooses the still smaller charging step from the
 10% dust-radius displacement criterion.
 
+Presheath preparation uses its own collision-limited step. Its null-collision
+majorant is bounded by `2 * sound_speed + 6 * ion_thermal_speed`, independently
+of the inlet Mach number; production retains the full-table collision majorant.
+Axial density and flux are sampled once per ion plasma period and convergence
+is evaluated from adjacent time-window averages.
+
 Each stage prints and records separate wall-clock durations for presheath
 background preparation/loading, production (including JIT compilation),
 postprocessing, and the complete stage. CUDA work is synchronized before the

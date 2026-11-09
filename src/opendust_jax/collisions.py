@@ -15,7 +15,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from opendust_jax.models import ELEMENTARY_CHARGE_C, ArgonPresheathPlasmaSI
+from opendust_jax.models import (
+    BOLTZMANN_J_K,
+    ELEMENTARY_CHARGE_C,
+    ArgonPresheathPlasmaSI,
+)
 
 
 _ELASTIC_FILE = "Arplus_Ar_elastic_isotropic_scattering.csv"
@@ -46,6 +50,7 @@ class CollisionEvents(NamedTuple):
     charge_exchange: jax.Array
     null: jax.Array
     out_of_range: jax.Array
+    majorant_exceeded: jax.Array
 
 
 @dataclass(frozen=True)
@@ -168,17 +173,38 @@ class ArgonNullCollisionModel:
         data: CrossSectionData | None = None,
         *,
         maximum_candidate_probability: float = 0.1,
+        maximum_relative_speed_m_s: float | None = None,
     ) -> None:
         self.plasma = plasma
         self.data = data or load_argon_cross_sections()
         self.maximum_candidate_probability = maximum_candidate_probability
         if not 0.0 < maximum_candidate_probability < 1.0:
             raise ValueError("maximum_candidate_probability must lie between zero and one")
+        if maximum_relative_speed_m_s is not None and (
+            not math.isfinite(maximum_relative_speed_m_s)
+            or maximum_relative_speed_m_s <= 0.0
+        ):
+            raise ValueError("maximum_relative_speed_m_s must be finite and positive")
+        self.maximum_relative_speed_m_s = maximum_relative_speed_m_s
         self._energy = jnp.asarray(self.data.energy_eV, dtype=jnp.float32)
         self._elastic = jnp.asarray(self.data.elastic_m2, dtype=jnp.float32)
         self._cx = jnp.asarray(self.data.charge_exchange_m2, dtype=jnp.float32)
         reduced_mass = 0.5 * plasma.ion_mass_kg
-        dense_energy = np.geomspace(max(self.data.energy_eV[1], 1.0e-12), self.data.energy_eV[-1], 200_000)
+        table_maximum = self.data.energy_eV[-1]
+        requested_maximum = (
+            table_maximum
+            if maximum_relative_speed_m_s is None
+            else 0.5
+            * reduced_mass
+            * maximum_relative_speed_m_s**2
+            / ELEMENTARY_CHARGE_C
+        )
+        self.maximum_majorant_energy_eV = float(min(requested_maximum, table_maximum))
+        dense_energy = np.geomspace(
+            max(self.data.energy_eV[1], 1.0e-12),
+            self.maximum_majorant_energy_eV,
+            200_000,
+        )
         elastic = np.exp(np.interp(
             np.log(dense_energy), np.log(self.data.energy_eV[1:]), np.log(self.data.elastic_m2[1:])
         ))
@@ -231,10 +257,12 @@ class ArgonNullCollisionModel:
         elastic_rate = self.plasma.neutral_density_m3 * elastic_sigma * relative_speed
         cx_rate = self.plasma.neutral_density_m3 * cx_sigma * relative_speed
         total_rate = elastic_rate + cx_rate
+        majorant_exceeded = total_rate > self.maximum_frequency_s
+        effective_rate = jnp.minimum(total_rate, self.maximum_frequency_s)
         real = candidates & (
             jax.random.uniform(accept_key, (count,), dtype=jnp.float32)
             * self.maximum_frequency_s
-            < total_rate
+            < effective_rate
         )
         elastic = real & (
             jax.random.uniform(channel_key, (count,), dtype=jnp.float32) * total_rate
@@ -247,7 +275,24 @@ class ArgonNullCollisionModel:
         scattered, _ = elastic_scatter_equal_mass(velocities_m_s, neutral, direction)
         updated = jnp.where(elastic[:, None], scattered, velocities_m_s)
         updated = jnp.where(charge_exchange[:, None], neutral, updated)
-        return updated, CollisionEvents(candidates, elastic, charge_exchange, null, out_of_range)
+        return updated, CollisionEvents(
+            candidates,
+            elastic,
+            charge_exchange,
+            null,
+            out_of_range,
+            majorant_exceeded,
+        )
+
+
+def presheath_preparation_speed_limit_m_s(
+    plasma: ArgonPresheathPlasmaSI,
+) -> float:
+    """Return the fixed 2 cs + 6 vth preparation majorant speed."""
+    sound_speed = math.sqrt(
+        BOLTZMANN_J_K * plasma.electron_temperature_K / plasma.ion_mass_kg
+    )
+    return 2.0 * sound_speed + 6.0 * plasma.ion_thermal_speed_m_s
 
 
 __all__ = [
@@ -258,4 +303,5 @@ __all__ = [
     "LegacyChargeExchangeCollision",
     "elastic_scatter_equal_mass",
     "load_argon_cross_sections",
+    "presheath_preparation_speed_limit_m_s",
 ]

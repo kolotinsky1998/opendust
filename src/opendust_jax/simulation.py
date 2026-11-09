@@ -76,6 +76,7 @@ class _RunCarry(NamedTuple):
     collision_charge_exchange: jax.Array
     collision_null: jax.Array
     collision_out_of_range: jax.Array
+    collision_majorant_exceeded: jax.Array
     collision_operator_calls: jax.Array
 
 
@@ -355,26 +356,9 @@ class OpenDustJAX:
         if saved_plasma != asdict(self.plasma):
             raise ValueError("presheath background plasma configuration does not match")
         saved_simulation = metadata.get("simulation", {})
-        for name in ("radius_m", "height_m", "particle_count", "dt_s", "seed"):
+        for name in ("radius_m", "height_m", "particle_count", "seed"):
             if saved_simulation.get(name) != getattr(self.simulation, name):
                 raise ValueError(f"presheath background {name} does not match")
-        saved_collision_config = saved_simulation.get("collision_subcycling")
-        expected_collision_config = asdict(self.simulation).get("collision_subcycling")
-        if saved_collision_config != expected_collision_config:
-            raise ValueError(
-                "presheath background collision_subcycling does not match"
-            )
-        saved_splitting = metadata.get("collision_subcycling")
-        if self.simulation.collision_subcycling is not None and (
-            saved_splitting is None
-            or int(saved_splitting.get("resolved_substeps", 0))
-            != self.collision_substeps
-            or not math.isclose(
-                float(saved_splitting.get("dt_collision_s", -1.0)),
-                self.collision_dt_s,
-            )
-        ):
-            raise ValueError("presheath background collision schedule does not match")
         expected_softening = self.simulation.softening_m or 1.0e-3 * self.plasma.screening_length_m
         if not math.isclose(float(metadata.get("softening_m", -1.0)), expected_softening):
             raise ValueError("presheath background softening_m does not match")
@@ -729,6 +713,7 @@ class OpenDustJAX:
                 jnp.sum(collision_events.charge_exchange, dtype=jnp.int32),
                 jnp.sum(collision_events.null, dtype=jnp.int32),
                 jnp.sum(collision_events.out_of_range, dtype=jnp.int32),
+                jnp.sum(collision_events.majorant_exceeded, dtype=jnp.int32),
             )
         return _RunCarry(
             next_state,
@@ -744,6 +729,7 @@ class OpenDustJAX:
             carry.collision_charge_exchange + collision_counts[2],
             carry.collision_null + collision_counts[3],
             carry.collision_out_of_range + collision_counts[4],
+            carry.collision_majorant_exceeded + collision_counts[5],
             carry.collision_operator_calls
             + jnp.asarray(collision_operator_calls, dtype=jnp.int32),
         )
@@ -756,7 +742,7 @@ class OpenDustJAX:
         velocity = state.velocities_m_s
         zero_events = jnp.zeros((self.simulation.particle_count,), dtype=bool)
         collision_events = CollisionEvents(
-            zero_events, zero_events, zero_events, zero_events, zero_events
+            zero_events, zero_events, zero_events, zero_events, zero_events, zero_events
         )
         if isinstance(self.plasma, FieldDrivenPlasmaSI):
             velocity, legacy_events = self.collision_model.apply(
@@ -766,7 +752,7 @@ class OpenDustJAX:
                 self.plasma.collision_frequency_s * self.simulation.dt_s,
             )
             collision_events = CollisionEvents(
-                legacy_events, zero_events, legacy_events, zero_events, zero_events
+                legacy_events, zero_events, legacy_events, zero_events, zero_events, zero_events
             )
         elif isinstance(self.plasma, ArgonPresheathPlasmaSI):
             velocity, collision_events = self.collision_model.apply(
@@ -870,7 +856,7 @@ class OpenDustJAX:
         velocity = state.velocities_m_s
         zero_events = jnp.zeros((self.simulation.particle_count,), dtype=bool)
         collision_events = CollisionEvents(
-            zero_events, zero_events, zero_events, zero_events, zero_events
+            zero_events, zero_events, zero_events, zero_events, zero_events, zero_events
         )
         if isinstance(self.plasma, FieldDrivenPlasmaSI):
             velocity, legacy_events = self.collision_model.apply(
@@ -880,7 +866,7 @@ class OpenDustJAX:
                 self.plasma.collision_frequency_s * self.simulation.dt_s,
             )
             collision_events = CollisionEvents(
-                legacy_events, zero_events, legacy_events, zero_events, zero_events
+                legacy_events, zero_events, legacy_events, zero_events, zero_events, zero_events
             )
         elif isinstance(self.plasma, ArgonPresheathPlasmaSI):
             velocity, collision_events = self.collision_model.apply(
@@ -1043,6 +1029,7 @@ class OpenDustJAX:
                 cx_count,
                 null_count,
                 out_of_range_count,
+                majorant_exceeded_count,
                 operator_calls,
             ) = inner
             (
@@ -1070,6 +1057,7 @@ class OpenDustJAX:
                         count,
                         zero_count,
                         zero_count,
+                        zero_count,
                         jnp.asarray(1, jnp.int32),
                     )
                 if isinstance(self.plasma, ArgonPresheathPlasmaSI):
@@ -1085,9 +1073,11 @@ class OpenDustJAX:
                         jnp.sum(events.charge_exchange, dtype=jnp.int32),
                         jnp.sum(events.null, dtype=jnp.int32),
                         jnp.sum(events.out_of_range, dtype=jnp.int32),
+                        jnp.sum(events.majorant_exceeded, dtype=jnp.int32),
                         jnp.asarray(1, jnp.int32),
                     )
                 return current_velocity, (
+                    zero_count,
                     zero_count,
                     zero_count,
                     zero_count,
@@ -1098,6 +1088,7 @@ class OpenDustJAX:
 
             def skip_collision(current_velocity):
                 return current_velocity, (
+                    zero_count,
                     zero_count,
                     zero_count,
                     zero_count,
@@ -1187,7 +1178,8 @@ class OpenDustJAX:
                 cx_count + counts[2],
                 null_count + counts[3],
                 out_of_range_count + counts[4],
-                operator_calls + counts[5],
+                majorant_exceeded_count + counts[5],
+                operator_calls + counts[6],
             ), None
 
         initial_inner = (
@@ -1197,6 +1189,7 @@ class OpenDustJAX:
             jnp.zeros((dust_count, 3), jnp.float32),
             carry.fast_forces_N,
             carry.orbit_in_N,
+            zero_count,
             zero_count,
             zero_count,
             zero_count,
@@ -1226,6 +1219,7 @@ class OpenDustJAX:
             cx_count,
             null_count,
             out_of_range_count,
+            majorant_exceeded_count,
             operator_calls,
         ) = final_inner
         pair_force, coincident = self._pair_force(positions)
@@ -1242,7 +1236,7 @@ class OpenDustJAX:
         collection_force = self.superion_mass_kg / self.simulation.dt_s * momentum
         zero_events = jnp.zeros((self.simulation.particle_count,), dtype=bool)
         empty_events = CollisionEvents(
-            zero_events, zero_events, zero_events, zero_events, zero_events
+            zero_events, zero_events, zero_events, zero_events, zero_events, zero_events
         )
         next_carry = self._complete_carry(
             carry,
@@ -1258,6 +1252,7 @@ class OpenDustJAX:
                 cx_count,
                 null_count,
                 out_of_range_count,
+                majorant_exceeded_count,
             ),
             operator_calls,
         )
@@ -1296,6 +1291,7 @@ class OpenDustJAX:
             jnp.asarray(0, jnp.int32),
             jnp.asarray(0, jnp.int32),
             jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
         )
         initial_orbit, initial_dust_dust, initial_external = self._dust_force_components(
             state.positions_m, state.dust_charges_C, initial_orbit_in
@@ -1312,7 +1308,7 @@ class OpenDustJAX:
         histories: list[tuple[np.ndarray, ...]] = []
         trajectory_steps: list[int] = []
         trajectory_positions: list[np.ndarray] = []
-        collision_totals = [0, 0, 0, 0, 0, 0]
+        collision_totals = [0, 0, 0, 0, 0, 0, 0]
         completed = 0
         while completed < self.simulation.steps:
             chunk = min(base_chunk, self.simulation.steps - completed)
@@ -1339,6 +1335,7 @@ class OpenDustJAX:
                         carry.collision_charge_exchange,
                         carry.collision_null,
                         carry.collision_out_of_range,
+                        carry.collision_majorant_exceeded,
                         carry.collision_operator_calls,
                     )
                 )
@@ -1357,6 +1354,7 @@ class OpenDustJAX:
                 collision_charge_exchange=zero_count,
                 collision_null=zero_count,
                 collision_out_of_range=zero_count,
+                collision_majorant_exceeded=zero_count,
                 collision_operator_calls=zero_count,
             )
             host_history = tuple(np.asarray(x) for x in jax.device_get(chunk_history))
@@ -1456,7 +1454,8 @@ class OpenDustJAX:
                 charge_exchange_count=collision_totals[2],
                 null_count=collision_totals[3],
                 out_of_range_count=collision_totals[4],
-                operator_call_count=collision_totals[5],
+                majorant_exceeded_count=collision_totals[5],
+                operator_call_count=collision_totals[6],
             ),
         )
 

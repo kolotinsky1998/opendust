@@ -21,11 +21,12 @@ import numpy as np
 from opendust_jax import (
     ARTICLE_DUST_Z_OVER_LAMBDA,
     ArgonPresheathPlasmaSI,
-    CollisionSubcyclingConfig,
+    ArgonNullCollisionModel,
     PaperElectricField,
     PresheathEquilibrationConfig,
     SimulationConfigSI,
     prepare_presheath_background,
+    presheath_preparation_speed_limit_m_s,
     recommend_main_timestep,
 )
 from opendust_jax.article_reproduction import (
@@ -127,9 +128,12 @@ def run_profile(
         ion_mass_kg=ARTICLE_ION_MASS_KG,
         electric_field=field,
     )
-    collision_subcycling = CollisionSubcyclingConfig()
+    preparation_speed_limit = presheath_preparation_speed_limit_m_s(plasma)
+    collision = ArgonNullCollisionModel(
+        plasma, maximum_relative_speed_m_s=preparation_speed_limit
+    )
     timestep = recommend_main_timestep(
-        plasma, collision_subcycling=collision_subcycling
+        plasma, collision_model=collision
     )
     particle_count = 64 if smoke else int(raw["particle_count"])
     simulation = SimulationConfigSI(
@@ -138,7 +142,7 @@ def run_profile(
         particle_count=particle_count,
         steps=0,
         dt_s=timestep.recommended_dt_s,
-        collision_subcycling=collision_subcycling,
+        collision_subcycling=None,
         seed=20_041,
         force_backend="jax" if smoke else str(raw["force_backend"]),
         step_chunk_size=1 if smoke else int(raw["step_chunk_size"]),
@@ -155,6 +159,7 @@ def run_profile(
             maximum_transit_times=0.5,
             averaging_blocks=1,
             source_block_size=64,
+            sampling_interval_plasma_periods=0.01,
         )
     else:
         equilibration = PresheathEquilibrationConfig(
@@ -168,7 +173,9 @@ def run_profile(
             averaging_blocks=int(raw["background_averaging_blocks"]),
             source_block_size=min(4096, particle_count),
         )
-    background = prepare_presheath_background(plasma, simulation, equilibration)
+    background = prepare_presheath_background(
+        plasma, simulation, equilibration, collision_model=collision
+    )
     density = _area_average(background.density_m3, background.r_m)
     flux = _area_average(background.axial_flux_m2_s, background.r_m)
     velocity = np.divide(flux, density, out=np.zeros_like(flux), where=density > 0.0)
@@ -209,6 +216,7 @@ def run_profile(
             "mode": "dust-free, noninteracting-ion presheath equilibration with null collisions",
             "particle_count": particle_count,
             "dt_s": timestep.recommended_dt_s,
+            "preparation_dt_s": timestep.recommended_dt_s,
             "ion_plasma_frequency_s": timestep.ion_plasma_frequency_s,
             "collision_majorant_frequency_s": timestep.collision_frequency_s,
             "collision_substeps": timestep.collision_substeps,
@@ -219,7 +227,7 @@ def run_profile(
         },
     )
     print(
-        f"completed Figure 3 {name}: N={particle_count}, dt_ii={timestep.recommended_dt_s:.6e}s, "
+        f"completed Figure 3 {name}: N={particle_count}, dt_prep={timestep.recommended_dt_s:.6e}s, "
         f"Ncoll={timestep.collision_substeps}, dt_coll={timestep.collision_dt_s:.6e}s, "
         f"background={background.fingerprint}",
         flush=True,

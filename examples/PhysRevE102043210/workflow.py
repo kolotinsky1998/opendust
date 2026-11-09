@@ -21,6 +21,7 @@ from opendust_jax import (
     ARTICLE_CASES,
     ARTICLE_DUST_Z_OVER_LAMBDA,
     ArgonPresheathPlasmaSI,
+    ArgonNullCollisionModel,
     ArticleReproductionConfig,
     ChargingSubcyclingConfig,
     CollisionSubcyclingConfig,
@@ -32,6 +33,7 @@ from opendust_jax import (
     PresheathEquilibrationConfig,
     SimulationConfigSI,
     prepare_presheath_background,
+    presheath_preparation_speed_limit_m_s,
     recommend_main_timestep,
 )
 from opendust_jax.article_reproduction import (
@@ -236,6 +238,13 @@ def run_stage(
     dt_s = time_grid.dt_s
     steps = time_grid.outer_steps
     burn_in_step = time_grid.burn_in_step
+    preparation_speed_limit = presheath_preparation_speed_limit_m_s(plasma)
+    preparation_collision = ArgonNullCollisionModel(
+        plasma, maximum_relative_speed_m_s=preparation_speed_limit
+    )
+    preparation_timestep = recommend_main_timestep(
+        plasma, collision_model=preparation_collision
+    )
     input_payload = {
         "workflow": config_as_metadata(config),
         "case": asdict(case),
@@ -254,6 +263,12 @@ def run_stage(
         "duration_s": time_grid.duration_s,
         "plasma_limit_s": recommendation.plasma_limit_s,
         "collision_subcycling": asdict(collision_subcycling),
+        "background_preparation": {
+            "dt_s": preparation_timestep.recommended_dt_s,
+            "maximum_relative_speed_m_s": preparation_speed_limit,
+            "maximum_energy_eV": preparation_collision.maximum_majorant_energy_eV,
+            "maximum_frequency_s": preparation_collision.maximum_frequency_s,
+        },
     }
     fingerprint = artifact_fingerprint(input_payload)
     prefix = artifact_prefix(config, case_index, branch, iteration)
@@ -274,7 +289,17 @@ def run_stage(
         force_backend=config.force_backend,
         step_chunk_size=config.step_chunk_size,
     )
-    preparation = SimulationConfigSI(steps=0, **common)
+    preparation = SimulationConfigSI(
+        radius_m=radius_m,
+        height_m=height_m,
+        particle_count=config.particle_count,
+        steps=0,
+        dt_s=preparation_timestep.recommended_dt_s,
+        collision_subcycling=None,
+        seed=case.seed,
+        force_backend=config.force_backend,
+        step_chunk_size=config.step_chunk_size,
+    )
     background_prefix = prefix.parent / f"{prefix.name}_presheath"
     background_npz = background_prefix.with_name(
         background_prefix.name + "_background.npz"
@@ -299,6 +324,7 @@ def run_stage(
                 averaging_blocks=config.background_averaging_blocks,
                 source_block_size=min(4096, config.particle_count),
             ),
+            collision_model=preparation_collision,
         )
         jax.block_until_ready(background.potential_V)
     background_cache_reused = (

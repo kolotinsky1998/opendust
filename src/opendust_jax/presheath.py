@@ -17,6 +17,7 @@ from opendust_jax.grid_potential import blocked_yukawa_sum
 from opendust_jax.models import (
     COULOMB_CONSTANT,
     ELEMENTARY_CHARGE_C,
+    EPSILON_0_F_M,
     ArgonPresheathPlasmaSI,
     PresheathEquilibrationConfig,
     SimulationConfigSI,
@@ -152,9 +153,10 @@ def _fingerprint(
     checksums: tuple[str, str],
     collision_substeps: int,
     collision_dt_s: float,
+    collision: ArgonNullCollisionModel,
 ) -> str:
     payload = {
-        "format_version": 2,
+        "format_version": 3,
         "plasma": asdict(plasma),
         "geometry": {
             "radius_m": simulation.radius_m,
@@ -174,6 +176,13 @@ def _fingerprint(
         "softening_m": softening_m,
         "boundary_model": "upstream_reinjection_specular_side",
         "cross_section_sha256": checksums,
+        "collision_majorant": {
+            "maximum_relative_speed_m_s": collision.maximum_relative_speed_m_s,
+            "maximum_energy_eV": collision.maximum_majorant_energy_eV,
+            "maximum_frequency_s": collision.maximum_frequency_s,
+            "maximum_candidate_probability": collision.maximum_candidate_probability,
+            "rate_policy_above_majorant": "saturate",
+        },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:24]
@@ -209,7 +218,7 @@ def save_presheath_background(
     temporary_json.write_text(
         json.dumps(
             {
-                "format_version": 2,
+                "format_version": 3,
                 "fingerprint": background.fingerprint,
                 "units": {
                     "r_m": "m", "z_m": "m", "density_m3": "m^-3",
@@ -293,6 +302,45 @@ def _flux_table(plasma: ArgonPresheathPlasmaSI) -> tuple[jax.Array, jax.Array]:
 def _relative_change(current: np.ndarray, previous: np.ndarray) -> float:
     scale = max(float(np.linalg.norm(previous)), np.finfo(float).tiny)
     return float(np.linalg.norm(current - previous) / scale)
+
+
+def _profile_sampling_schedule(
+    plasma: ArgonPresheathPlasmaSI,
+    simulation: SimulationConfigSI,
+    config: PresheathEquilibrationConfig,
+) -> tuple[float, float, int, float, int, float]:
+    omega_pi = math.sqrt(
+        plasma.density_m3 * ELEMENTARY_CHARGE_C**2
+        / (EPSILON_0_F_M * plasma.ion_mass_kg)
+    )
+    ion_plasma_period_s = 2.0 * math.pi / omega_pi
+    requested_interval_s = (
+        config.sampling_interval_plasma_periods * ion_plasma_period_s
+    )
+    interval_steps = max(1, int(math.ceil(requested_interval_s / simulation.dt_s)))
+    resolved_interval_s = interval_steps * simulation.dt_s
+    transit_time = simulation.height_m / plasma.flow_speed_m_s
+    transit_window_steps = max(
+        1,
+        int(
+            math.ceil(
+                config.block_transit_times * transit_time / simulation.dt_s
+            )
+        ),
+    )
+    minimum_window_steps = max(transit_window_steps, interval_steps)
+    samples_per_window = int(
+        math.ceil(minimum_window_steps / interval_steps)
+    )
+    window_steps = samples_per_window * interval_steps
+    return (
+        ion_plasma_period_s,
+        requested_interval_s,
+        interval_steps,
+        resolved_interval_s,
+        window_steps,
+        window_steps * simulation.dt_s,
+    )
 
 
 def _direct_potential(
@@ -390,6 +438,7 @@ def prepare_presheath_background(
         collision.checksums,
         collision_substeps,
         collision_dt_s,
+        collision,
     )
     cache_path = Path(config.output_prefix).expanduser().with_name(
         Path(config.output_prefix).name + "_background.npz"
@@ -415,7 +464,7 @@ def prepare_presheath_background(
 
     def run_block(carry, block_steps: int):
         def one_collision_substep(inner, _):
-            pos, vel, random_key, density_sum, flux_sum, out_count = inner
+            pos, vel, random_key, out_count, majorant_exceeded_count = inner
             random_key, collision_key, reinjection_key = jax.random.split(random_key, 3)
             vel, events = collision.apply(
                 collision_key,
@@ -449,17 +498,16 @@ def prepare_presheath_background(
             pos = jnp.where(axial_out[:, None], injected_pos, pos)
             vel = jnp.where(axial_out[:, None], injected_vel, vel)
 
-            index = jnp.clip(((pos[:, 2] / simulation.height_m + 0.5) * nz_profile).astype(jnp.int32), 0, nz_profile - 1)
-            density_sum += jnp.bincount(index, length=nz_profile)
-            flux_sum += jnp.bincount(index, weights=vel[:, 2], length=nz_profile)
             out_of_range = jnp.sum(events.out_of_range, dtype=jnp.int32)
+            majorant_exceeded = jnp.sum(
+                events.majorant_exceeded, dtype=jnp.int32
+            )
             return (
                 pos,
                 vel,
                 random_key,
-                density_sum,
-                flux_sum,
                 out_count + out_of_range,
+                majorant_exceeded_count + majorant_exceeded,
             ), None
 
         def one_step(inner, _):
@@ -471,14 +519,32 @@ def prepare_presheath_background(
             )
             return final, None
 
-        initial = (carry[0], carry[1], carry[2], jnp.zeros(nz_profile), jnp.zeros(nz_profile), jnp.asarray(0, jnp.int32))
+        initial = (
+            carry[0],
+            carry[1],
+            carry[2],
+            jnp.asarray(0, jnp.int32),
+            jnp.asarray(0, jnp.int32),
+        )
         final, _ = jax.lax.scan(one_step, initial, xs=None, length=block_steps)
         return final
 
     transit_time = simulation.height_m / plasma.flow_speed_m_s
-    block_steps = max(
+    averaging_block_steps = max(
         1, int(math.ceil(config.block_transit_times * transit_time / simulation.dt_s))
     )
+    (
+        ion_plasma_period_s,
+        requested_sampling_interval_s,
+        sampling_interval_steps,
+        sampling_interval_s,
+        convergence_window_steps,
+        convergence_window_s,
+    ) = _profile_sampling_schedule(plasma, simulation, config)
+    if convergence_window_steps < averaging_block_steps:
+        raise AssertionError(
+            "convergence window must not be shorter than the averaging block"
+        )
     minimum_steps = int(
         math.ceil(config.minimum_transit_times * transit_time / simulation.dt_s)
     )
@@ -486,41 +552,79 @@ def prepare_presheath_background(
         math.ceil(config.maximum_transit_times * transit_time / simulation.dt_s)
     )
     compiled_blocks: dict[int, object] = {}
+    majorant_exceeded_total = 0
 
     def execute_device(steps: int):
-        nonlocal positions, velocities, key
+        nonlocal positions, velocities, key, majorant_exceeded_total
         if steps not in compiled_blocks:
             compiled_blocks[steps] = jax.jit(
                 lambda carry, _steps=steps: run_block(carry, _steps)
             )
         final = compiled_blocks[steps]((positions, velocities, key))
         positions, velocities, key = final[0], final[1], final[2]
-        if int(np.asarray(jax.device_get(final[5]))) > 0:
+        out_of_range, majorant_exceeded = (
+            int(np.asarray(value))
+            for value in jax.device_get((final[3], final[4]))
+        )
+        if out_of_range > 0:
             raise RuntimeError("Ar+/Ar collision energy exceeded the 10 keV table range")
+        majorant_exceeded_total += majorant_exceeded
         return final
 
-    def execute_for_convergence(steps: int):
-        final = execute_device(steps)
-        return np.asarray(jax.device_get(final[3])), np.asarray(
-            jax.device_get(final[4])
+    @jax.jit
+    def sample_axial_profile(
+        sample_positions: jax.Array, sample_velocities: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
+        index = jnp.clip(
+            (
+                (sample_positions[:, 2] / simulation.height_m + 0.5)
+                * nz_profile
+            ).astype(jnp.int32),
+            0,
+            nz_profile - 1,
         )
+        return (
+            jnp.bincount(index, length=nz_profile),
+            jnp.bincount(
+                index, weights=sample_velocities[:, 2], length=nz_profile
+            ),
+        )
+
+    def execute_convergence_window() -> tuple[np.ndarray, np.ndarray, int]:
+        remaining = convergence_window_steps
+        density_sum = jnp.zeros(nz_profile, dtype=jnp.float32)
+        flux_sum = jnp.zeros(nz_profile, dtype=jnp.float32)
+        sample_count = 0
+        while remaining > 0:
+            steps = min(sampling_interval_steps, remaining)
+            execute_device(steps)
+            density, flux = sample_axial_profile(positions, velocities)
+            density_sum += density
+            flux_sum += flux
+            sample_count += 1
+            remaining -= steps
+        density, flux = jax.device_get(
+            (density_sum / sample_count, flux_sum / sample_count)
+        )
+        return np.asarray(density), np.asarray(flux), sample_count
 
     completed = 0
     while completed < minimum_steps:
-        steps = min(block_steps, minimum_steps - completed)
+        steps = min(averaging_block_steps, minimum_steps - completed)
         execute_device(steps)
         completed += steps
 
     previous_density = previous_flux = None
     consecutive = 0
     history: list[tuple[float, float, float]] = []
-    while completed < maximum_steps and consecutive < config.consecutive_blocks:
-        steps = min(block_steps, maximum_steps - completed)
-        density, flux = execute_for_convergence(steps)
-        completed += steps
-        samples = float(steps * collision_substeps)
-        density = density / samples
-        flux = flux / samples
+    convergence_sample_count = 0
+    while (
+        completed + convergence_window_steps <= maximum_steps
+        and consecutive < config.consecutive_blocks
+    ):
+        density, flux, window_samples = execute_convergence_window()
+        completed += convergence_window_steps
+        convergence_sample_count += window_samples
         if previous_density is None:
             density_change = flux_change = math.inf
         else:
@@ -589,7 +693,7 @@ def prepare_presheath_background(
         return density, axial_flux, potential
 
     for _ in range(config.averaging_blocks):
-        execute_device(block_steps)
+        execute_device(averaging_block_steps)
         density, axial_flux, potential = sample_fields(positions, velocities)
         density_accum += density
         axial_flux_accum += axial_flux
@@ -616,13 +720,34 @@ def prepare_presheath_background(
         "equilibration": {**asdict(config), "output_prefix": str(config.output_prefix)},
         "softening_m": softening,
         "cross_section_sha256": collision.checksums,
-        "completed_steps": completed + config.averaging_blocks * block_steps,
+        "completed_steps": completed
+        + config.averaging_blocks * averaging_block_steps,
         "boundary_model": "upstream_reinjection_specular_side",
         "time_splitting_version": 1,
         "collision_subcycling": {
             "enabled": simulation.collision_subcycling is not None,
             "resolved_substeps": collision_substeps,
             "dt_collision_s": collision_dt_s,
+        },
+        "collision_majorant": {
+            "maximum_relative_speed_m_s": collision.maximum_relative_speed_m_s,
+            "maximum_energy_eV": collision.maximum_majorant_energy_eV,
+            "maximum_frequency_s": collision.maximum_frequency_s,
+            "maximum_candidate_probability": collision.maximum_candidate_probability,
+            "exceeded_count": majorant_exceeded_total,
+            "rate_policy_above_majorant": "saturate",
+        },
+        "profile_sampling": {
+            "ion_plasma_period_s": ion_plasma_period_s,
+            "requested_interval_s": requested_sampling_interval_s,
+            "resolved_interval_steps": sampling_interval_steps,
+            "resolved_interval_s": sampling_interval_s,
+            "convergence_window_steps": convergence_window_steps,
+            "convergence_window_s": convergence_window_s,
+            "samples_per_window": (
+                convergence_window_steps // sampling_interval_steps
+            ),
+            "convergence_sample_count": convergence_sample_count,
         },
     }
     background = _attach_device_background(

@@ -229,6 +229,7 @@ class PresheathEquilibrationConfig:
     maximum_transit_times: float = 100.0
     averaging_blocks: int = 10
     source_block_size: int = 4096
+    sampling_interval_plasma_periods: float = 1.0
 
     def __post_init__(self) -> None:
         for name in (
@@ -238,6 +239,7 @@ class PresheathEquilibrationConfig:
             "minimum_transit_times",
             "block_transit_times",
             "maximum_transit_times",
+            "sampling_interval_plasma_periods",
         ):
             _positive(name, getattr(self, name))
         if self.consecutive_blocks <= 0 or self.averaging_blocks <= 0:
@@ -420,6 +422,7 @@ class CollisionStatistics:
     charge_exchange_count: int = 0
     null_count: int = 0
     out_of_range_count: int = 0
+    majorant_exceeded_count: int = 0
     operator_call_count: int = 0
 
 

@@ -23,6 +23,7 @@ from opendust_jax.collisions import (
     ArgonNullCollisionModel,
     CollisionModel,
     LegacyChargeExchangeCollision,
+    presheath_preparation_speed_limit_m_s,
     load_argon_cross_sections,
 )
 from opendust_jax.diagnostics import (
@@ -130,6 +131,7 @@ __all__ = [
     "plane_potential_snapshot_V",
     "save_checkpoint",
     "prepare_presheath_background",
+    "presheath_preparation_speed_limit_m_s",
     "save_presheath_background",
     "recommend_main_timestep",
     "required_field_V_m",
