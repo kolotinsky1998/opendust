@@ -40,18 +40,20 @@ reproduction), run:
 JAX_ENABLE_X64=1 python3 workflow.py --stage smoke
 ```
 
-Every production stage uses exactly 250,000 outer ion--ion force updates over
-the full duration `83 * (2*pi/omega_pi)`.  Thus `dt_ii` is the physical duration
-divided by 250,000 rather than the plasma-limit recommendation; the default
-burn-in `16.6 tau_i` starts at outer step 50,000.  The expensive plane
-diagnostic is sampled every 500 outer steps. `CollisionSubcyclingConfig()`
-resolves the null-collision majorant inside each outer step, while
-`ChargingSubcyclingConfig()` chooses the still smaller charging step from the
-10% dust-radius displacement criterion.
+Every production stage uses the outer ion--ion force step
+`dt = 0.1 / omega_pi`. The number of outer steps is rounded up so that the run
+spans at least `83 * (2*pi/omega_pi)` (5,216 steps with the article parameters),
+and the default `16.6 tau_i` burn-in begins at step 1,044. The expensive plane
+diagnostic is sampled every 10 outer steps, preserving approximately the old
+physical sampling cadence. `CollisionSubcyclingConfig()` resolves the bounded
+`2 * sound_speed + 6 * ion_thermal_speed` majorant inside each outer step,
+while `ChargingSubcyclingConfig()` chooses the still smaller charging step from
+the 10% dust-radius displacement criterion.
 
-Presheath preparation uses its own collision-limited step. Its null-collision
-majorant is bounded by `2 * sound_speed + 6 * ion_thermal_speed`, independently
-of the inlet Mach number; production retains the full-table collision majorant.
+Presheath preparation uses its own collision-limited step. Both preparation
+and production use the `2 * sound_speed + 6 * ion_thermal_speed` collision
+majorant independently of the inlet Mach number; only production places that
+operator on an inner grid below its `0.1 / omega_pi` outer step.
 Axial density and flux are sampled once per ion plasma period and convergence
 is evaluated from adjacent time-window averages.
 

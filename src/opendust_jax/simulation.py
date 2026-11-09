@@ -1462,6 +1462,18 @@ class OpenDustJAX:
     def run_from_checkpoint(self, path: Path | str) -> SimulationResult:
         """Validate the saved background and continue from a checkpoint."""
         state, coefficients, metadata = load_checkpoint(path)
+        if isinstance(self.collision_model, ArgonNullCollisionModel):
+            expected_majorant = {
+                "maximum_relative_speed_m_s": (
+                    self.collision_model.maximum_relative_speed_m_s
+                ),
+                "maximum_energy_eV": (
+                    self.collision_model.maximum_majorant_energy_eV
+                ),
+                "maximum_frequency_s": self.collision_model.maximum_frequency_s,
+            }
+            if metadata.get("collision_majorant") != expected_majorant:
+                raise ValueError("checkpoint collision majorant does not match")
         saved_collision_subcycling = metadata.get("collision_subcycling")
         collision_enabled = self.simulation.collision_subcycling is not None
         if saved_collision_subcycling is None:
@@ -1547,6 +1559,19 @@ class OpenDustJAX:
             "screening_length_m": self.screening_length_m,
             "softening_m": self.softening_m,
             "time_splitting_version": 1,
+            "collision_majorant": (
+                {
+                    "maximum_relative_speed_m_s": (
+                        self.collision_model.maximum_relative_speed_m_s
+                    ),
+                    "maximum_energy_eV": (
+                        self.collision_model.maximum_majorant_energy_eV
+                    ),
+                    "maximum_frequency_s": self.collision_model.maximum_frequency_s,
+                }
+                if isinstance(self.collision_model, ArgonNullCollisionModel)
+                else None
+            ),
             "collision_subcycling": {
                 "enabled": self.simulation.collision_subcycling is not None,
                 "resolved_substeps": self.collision_substeps,

@@ -110,6 +110,9 @@ def update_saved_metadata(path: Path, metadata: dict) -> None:
 
 def load_config(path: Path) -> ArticleReproductionConfig:
     raw = json.loads(path.read_text(encoding="utf-8"))
+    # Older article configs fixed the number of outer steps. Production now
+    # fixes dt*omega_pi instead, so accept and discard the legacy field.
+    raw.pop("outer_steps", None)
     output = Path(raw.pop("output_dir"))
     if not output.is_absolute():
         output = (path.parent / output).resolve()
@@ -229,19 +232,23 @@ def run_stage(
     plasma = article_plasma(
         field, mach, height_m, float(dust_z_m[0]), float(dust_z_m[-1])
     )
+    production_speed_limit = presheath_preparation_speed_limit_m_s(plasma)
+    production_collision = ArgonNullCollisionModel(
+        plasma, maximum_relative_speed_m_s=production_speed_limit
+    )
     collision_subcycling = CollisionSubcyclingConfig()
     recommendation = recommend_main_timestep(
-        plasma, collision_subcycling=collision_subcycling
+        plasma,
+        collision_model=production_collision,
+        collision_subcycling=collision_subcycling,
     )
     omega_pi = recommendation.ion_plasma_frequency_s
     time_grid = resolve_article_time_grid(config, omega_pi)
     dt_s = time_grid.dt_s
     steps = time_grid.outer_steps
     burn_in_step = time_grid.burn_in_step
-    preparation_speed_limit = presheath_preparation_speed_limit_m_s(plasma)
-    preparation_collision = ArgonNullCollisionModel(
-        plasma, maximum_relative_speed_m_s=preparation_speed_limit
-    )
+    preparation_speed_limit = production_speed_limit
+    preparation_collision = production_collision
     preparation_timestep = recommend_main_timestep(
         plasma, collision_model=preparation_collision
     )
@@ -263,6 +270,11 @@ def run_stage(
         "duration_s": time_grid.duration_s,
         "plasma_limit_s": recommendation.plasma_limit_s,
         "collision_subcycling": asdict(collision_subcycling),
+        "production_collision_majorant": {
+            "maximum_relative_speed_m_s": production_speed_limit,
+            "maximum_energy_eV": production_collision.maximum_majorant_energy_eV,
+            "maximum_frequency_s": production_collision.maximum_frequency_s,
+        },
         "background_preparation": {
             "dt_s": preparation_timestep.recommended_dt_s,
             "maximum_relative_speed_m_s": preparation_speed_limit,
@@ -369,6 +381,7 @@ def run_stage(
             production,
             dust,
             background=background,
+            collision_model=production_collision,
             diagnostics=diagnostics,
             output=OutputConfig(
                 checkpoint_path=prefix.with_name(prefix.name + "_restart.npz")
@@ -531,7 +544,7 @@ def smoke_config(config: ArticleReproductionConfig) -> ArticleReproductionConfig
         output_dir=Path(config.output_dir) / "smoke",
         particle_count=64,
         iterations=2,
-        outer_steps=32,
+        production_timestep_omega_pi=0.1,
         duration_plasma_periods=0.4,
         burn_in_plasma_periods=0.1,
         force_backend="jax",

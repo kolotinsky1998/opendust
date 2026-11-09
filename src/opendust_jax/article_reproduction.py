@@ -102,7 +102,7 @@ class ArticleReproductionConfig:
     output_dir: Path | str
     particle_count: int = 2**16
     iterations: int = 5
-    outer_steps: int = 250_000
+    production_timestep_omega_pi: float = 0.1
     duration_plasma_periods: float = 83.0
     burn_in_plasma_periods: float = 16.6
     radius_screening_lengths: float = 1.25
@@ -110,7 +110,7 @@ class ArticleReproductionConfig:
     force_backend: Literal["cuda", "jax"] = "cuda"
     diagnostic_nx: int = 81
     diagnostic_nz: int = 161
-    diagnostic_interval: int = 500
+    diagnostic_interval: int = 10
     step_chunk_size: int = 100
     background_grid_spacing_screening_lengths: float = 0.1
     background_density_tolerance: float = 0.02
@@ -123,10 +123,15 @@ class ArticleReproductionConfig:
     smoke_project_invalid_fields: bool = False
 
     def __post_init__(self) -> None:
-        if self.particle_count <= 0 or self.iterations < 2 or self.outer_steps <= 0:
+        if self.particle_count <= 0 or self.iterations < 2:
             raise ValueError(
-                "particle_count and outer_steps must be positive and iterations at least two"
+                "particle_count must be positive and iterations at least two"
             )
+        if (
+            not math.isfinite(self.production_timestep_omega_pi)
+            or self.production_timestep_omega_pi <= 0.0
+        ):
+            raise ValueError("production_timestep_omega_pi must be finite and positive")
         if not 0.0 < self.burn_in_plasma_periods < self.duration_plasma_periods:
             raise ValueError("burn-in must be positive and shorter than the run")
         if self.force_backend not in ("cuda", "jax"):
@@ -145,27 +150,21 @@ class ArticleTimeGrid:
 def resolve_article_time_grid(
     config: ArticleReproductionConfig, ion_plasma_frequency_s: float
 ) -> ArticleTimeGrid:
-    """Resolve an exact outer grid spanning the configured plasma periods."""
+    """Resolve the production grid at the configured fraction of 1/omega_pi."""
     if not math.isfinite(ion_plasma_frequency_s) or ion_plasma_frequency_s <= 0.0:
         raise ValueError("ion_plasma_frequency_s must be finite and positive")
     period_s = 2.0 * math.pi / ion_plasma_frequency_s
-    duration_s = config.duration_plasma_periods * period_s
-    dt_s = duration_s / config.outer_steps
-    raw_burn_step = (
-        config.outer_steps
-        * config.burn_in_plasma_periods
-        / config.duration_plasma_periods
-    )
-    nearest = round(raw_burn_step)
-    burn_in_step = (
-        int(nearest)
-        if math.isclose(raw_burn_step, nearest, rel_tol=0.0, abs_tol=1.0e-9)
-        else math.ceil(raw_burn_step)
+    requested_duration_s = config.duration_plasma_periods * period_s
+    dt_s = config.production_timestep_omega_pi / ion_plasma_frequency_s
+    outer_steps = math.ceil(requested_duration_s / dt_s)
+    duration_s = outer_steps * dt_s
+    burn_in_step = math.ceil(
+        config.burn_in_plasma_periods * period_s / dt_s
     )
     return ArticleTimeGrid(
         period_s,
         duration_s,
-        config.outer_steps,
+        outer_steps,
         dt_s,
         burn_in_step,
     )

@@ -35,7 +35,10 @@ from opendust_jax.article_reproduction import (
     save_iteration_artifact,
     simulation_z_m,
 )
-from opendust_jax.collisions import ArgonNullCollisionModel
+from opendust_jax.collisions import (
+    ArgonNullCollisionModel,
+    presheath_preparation_speed_limit_m_s,
+)
 from opendust_jax.models import (
     ELEMENTARY_CHARGE_C,
     EPSILON_0_F_M,
@@ -98,18 +101,20 @@ def test_unweighted_linear_and_quadratic_fits_recover_coefficients():
         )
 
 
-def test_article_time_grid_has_exact_outer_steps_duration_and_burn_in(tmp_path):
+def test_article_time_grid_uses_point_one_over_omega_pi(tmp_path):
     config = ArticleReproductionConfig(output_dir=tmp_path)
     omega_pi = math.sqrt(
         ARTICLE_REFERENCE_DENSITY_M3 * ELEMENTARY_CHARGE_C**2
         / (EPSILON_0_F_M * ARTICLE_ION_MASS_KG)
     )
     grid = resolve_article_time_grid(config, omega_pi)
-    assert grid.outer_steps == 250_000
-    assert grid.burn_in_step == 50_000
-    assert grid.duration_s == pytest.approx(83.0 * 2.0 * math.pi / omega_pi)
+    requested_duration = 83.0 * 2.0 * math.pi / omega_pi
+    assert grid.outer_steps == 5_216
+    assert grid.burn_in_step == 1_044
+    assert grid.duration_s >= requested_duration
+    assert grid.duration_s - requested_duration < grid.dt_s
     assert grid.outer_steps * grid.dt_s == pytest.approx(grid.duration_s)
-    assert grid.dt_s == pytest.approx(9.97824065802749e-10)
+    assert grid.dt_s == pytest.approx(0.1 / omega_pi)
 
 
 def test_article_grid_resolves_collision_and_charging_limits(tmp_path):
@@ -137,7 +142,12 @@ def test_article_grid_resolves_collision_and_charging_limits(tmp_path):
             ),
             ARTICLE_ION_MASS_KG,
         )
-        collision = ArgonNullCollisionModel(plasma)
+        collision = ArgonNullCollisionModel(
+            plasma,
+            maximum_relative_speed_m_s=presheath_preparation_speed_limit_m_s(
+                plasma
+            ),
+        )
         substeps, collision_dt, _, _ = resolve_collision_substeps(
             plasma,
             grid.dt_s,
@@ -147,7 +157,7 @@ def test_article_grid_resolves_collision_and_charging_limits(tmp_path):
         candidate_probability = 1.0 - math.exp(
             -collision.maximum_frequency_s * collision_dt
         )
-        assert substeps == 4
+        assert substeps == 10
         assert candidate_probability <= 0.1 + 1.0e-12
         velocity_limit = abs(plasma.flow_speed_m_s) + 4.0 * plasma.ion_thermal_speed_m_s
         charging_substeps = math.ceil(
