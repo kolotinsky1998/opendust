@@ -99,3 +99,44 @@ A short CPU/JAX functional check is available with:
 ```bash
 JAX_ENABLE_X64=1 python3 figure3_workflow.py --smoke --profile all
 ```
+
+## Short production-chain benchmark
+
+`benchmark_chain.py` is a reduced-duration performance workload for testing
+optimizations without running a complete Matthews-chain iteration.  It keeps
+the Case-I production geometry, 65,536 ions, seven self-consistently charged
+dust grains, prepared spline background, `0.1 / omega_pi` outer step,
+collision and charging subcycling, and the `81x161` plane diagnostics.  The
+diagnostics start at step 1 so that the short workload samples them at the same
+10-step cadence as the post-burn-in part of production.
+
+The default is one 32-step compile warm-up followed by one identical measured
+run.  On a node where the 5,216-step stage takes about 90 minutes, the two runs
+together should take approximately one minute.  Run it after the Case-I
+constant background has been prepared:
+
+```bash
+cd /home/avtimofeev/developing_opendust/opendust/examples/PhysRevE102043210
+sbatch slurm_chain_benchmark.sh
+```
+
+The measured time, resolved substep counts, operation counts, collision
+statistics, and a linear full-stage projection are written to
+`results/chain_benchmark/chain_benchmark_default.json`. Useful controlled variants
+include:
+
+```bash
+# Isolate the cost of plane diagnostics.
+sbatch slurm_chain_benchmark.sh --label no-diagnostics --no-diagnostics
+
+# Explore a charging-grid change without editing the article workflow.
+sbatch slurm_chain_benchmark.sh --label charge-64 --charging-substeps 64
+
+# Longer sample or several measured repetitions after one warm-up.
+sbatch slurm_chain_benchmark.sh --label longer --steps 64 --repeat 3
+```
+
+Use the same command and background before and after a code optimization.  The
+warm-up compiles the exact measured scan shape and is excluded from the
+reported median.  Pass `--warmup 0` only when end-to-end JIT time itself is the
+quantity being tested.
