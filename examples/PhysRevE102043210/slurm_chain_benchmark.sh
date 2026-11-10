@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=od-chain-bench
 #SBATCH --account=proj_1827
+#SBATCH --partition=test
 #SBATCH --gres=gpu:1
 #SBATCH --time=00:15:00
 set -euo pipefail
