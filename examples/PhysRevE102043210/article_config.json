@@ -20,5 +20,6 @@
   "background_block_transit_times": 10.0,
   "background_maximum_transit_times": 140.0,
   "background_averaging_blocks": 10,
+  "background_minimum_samples_per_convergence_window": 18,
   "smoke_project_invalid_fields": false
 }

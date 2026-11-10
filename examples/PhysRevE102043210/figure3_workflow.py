@@ -160,6 +160,7 @@ def run_profile(
             averaging_blocks=1,
             source_block_size=64,
             sampling_interval_plasma_periods=0.01,
+            minimum_samples_per_convergence_window=1,
         )
     else:
         equilibration = PresheathEquilibrationConfig(
@@ -175,6 +176,11 @@ def run_profile(
             maximum_transit_times=float(raw["background_maximum_transit_times"]),
             averaging_blocks=int(raw["background_averaging_blocks"]),
             source_block_size=min(4096, particle_count),
+            minimum_samples_per_convergence_window=int(
+                raw.get(
+                    "background_minimum_samples_per_convergence_window", 18
+                )
+            ),
         )
     background = prepare_presheath_background(
         plasma, simulation, equilibration, collision_model=collision

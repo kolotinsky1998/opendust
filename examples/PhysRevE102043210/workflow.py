@@ -336,6 +336,9 @@ def run_stage(
                 maximum_transit_times=config.background_maximum_transit_times,
                 averaging_blocks=config.background_averaging_blocks,
                 source_block_size=min(4096, config.particle_count),
+                minimum_samples_per_convergence_window=(
+                    config.background_minimum_samples_per_convergence_window
+                ),
             ),
             collision_model=preparation_collision,
         )
@@ -560,6 +563,7 @@ def smoke_config(config: ArticleReproductionConfig) -> ArticleReproductionConfig
         background_block_transit_times=0.05,
         background_maximum_transit_times=5.0,
         background_averaging_blocks=1,
+        background_minimum_samples_per_convergence_window=1,
         smoke_project_invalid_fields=False,
     )
 

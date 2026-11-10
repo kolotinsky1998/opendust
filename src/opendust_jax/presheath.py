@@ -329,8 +329,9 @@ def _profile_sampling_schedule(
         ),
     )
     minimum_window_steps = max(transit_window_steps, interval_steps)
-    samples_per_window = int(
-        math.ceil(minimum_window_steps / interval_steps)
+    samples_per_window = max(
+        config.minimum_samples_per_convergence_window,
+        int(math.ceil(minimum_window_steps / interval_steps)),
     )
     window_steps = samples_per_window * interval_steps
     return (

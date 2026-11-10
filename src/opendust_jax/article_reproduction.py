@@ -120,6 +120,7 @@ class ArticleReproductionConfig:
     background_block_transit_times: float = 10.0
     background_maximum_transit_times: float = 140.0
     background_averaging_blocks: int = 10
+    background_minimum_samples_per_convergence_window: int = 18
     smoke_project_invalid_fields: bool = False
 
     def __post_init__(self) -> None:
@@ -136,6 +137,10 @@ class ArticleReproductionConfig:
             raise ValueError("burn-in must be positive and shorter than the run")
         if self.force_backend not in ("cuda", "jax"):
             raise ValueError("force_backend must be 'cuda' or 'jax'")
+        if self.background_minimum_samples_per_convergence_window <= 0:
+            raise ValueError(
+                "background_minimum_samples_per_convergence_window must be positive"
+            )
 
 
 @dataclass(frozen=True)

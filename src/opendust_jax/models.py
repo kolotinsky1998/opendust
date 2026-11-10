@@ -230,6 +230,7 @@ class PresheathEquilibrationConfig:
     averaging_blocks: int = 10
     source_block_size: int = 4096
     sampling_interval_plasma_periods: float = 1.0
+    minimum_samples_per_convergence_window: int = 1
 
     def __post_init__(self) -> None:
         for name in (
@@ -244,6 +245,10 @@ class PresheathEquilibrationConfig:
             _positive(name, getattr(self, name))
         if self.consecutive_blocks <= 0 or self.averaging_blocks <= 0:
             raise ValueError("block counts must be positive")
+        if self.minimum_samples_per_convergence_window <= 0:
+            raise ValueError(
+                "minimum_samples_per_convergence_window must be positive"
+            )
         if self.source_block_size <= 0:
             raise ValueError("source_block_size must be positive")
         if self.maximum_transit_times <= self.minimum_transit_times:

@@ -49,13 +49,13 @@ def _cylindrical_node_volumes(r, z, radius, height):
     return np.pi * np.diff(r_edges**2)[None, :] * np.diff(z_edges)[:, None]
 
 
-def argon_plasma(pressure=0.1):
+def argon_plasma(pressure=0.1, inlet_mach=0.3):
     return ArgonPresheathPlasmaSI(
         neutral_temperature_K=300.0,
         electron_temperature_K=30_000.0,
         reference_density_m3=1.0e14,
         pressure_Pa=pressure,
-        inlet_mach=0.3,
+        inlet_mach=inlet_mach,
         electric_field=QuadraticElectricFieldSI(
             1000.0, enforce_presheath_constraints=False
         ),
@@ -193,6 +193,51 @@ def test_sampling_window_expands_to_plasma_period_when_transit_is_short(tmp_path
     assert resolved_interval >= period
     assert window >= resolved_interval
     assert window_steps % interval_steps == 0
+
+
+@pytest.mark.parametrize("inlet_mach", [0.46, 0.92, 1.40])
+def test_article_sampling_window_has_at_least_eighteen_profiles(
+    tmp_path, inlet_mach
+):
+    plasma = argon_plasma(inlet_mach=inlet_mach)
+    simulation = SimulationConfigSI(
+        radius_m=1.25 * plasma.screening_length_m,
+        height_m=5.0 * plasma.screening_length_m,
+        particle_count=8,
+        steps=0,
+        dt_s=5.231162530152083e-9,
+        force_backend="jax",
+    )
+    config = PresheathEquilibrationConfig(
+        output_prefix=tmp_path / f"sampling_{inlet_mach}",
+        minimum_transit_times=4.0,
+        block_transit_times=10.0,
+        maximum_transit_times=140.0,
+        consecutive_blocks=3,
+        minimum_samples_per_convergence_window=18,
+    )
+    (
+        _,
+        _,
+        interval_steps,
+        _,
+        window_steps,
+        window_s,
+    ) = _profile_sampling_schedule(plasma, simulation, config)
+    transit_s = simulation.height_m / plasma.flow_speed_m_s
+    samples_per_window = window_steps // interval_steps
+    maximum_steps = math.ceil(
+        config.maximum_transit_times * transit_s / simulation.dt_s
+    )
+    minimum_steps = math.ceil(
+        config.minimum_transit_times * transit_s / simulation.dt_s
+    )
+
+    assert samples_per_window == 18
+    assert window_s >= config.block_transit_times * transit_s
+    assert (maximum_steps - minimum_steps) // window_steps >= (
+        config.consecutive_blocks + 1
+    )
 
 
 def test_collision_operator_flags_energy_above_table_range():
