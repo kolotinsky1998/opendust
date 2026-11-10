@@ -21,6 +21,7 @@ import sys
 import time
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from opendust_jax import (
@@ -44,12 +45,35 @@ from opendust_jax.article_reproduction import (
     ARTICLE_REFERENCE_DENSITY_M3,
     PaperElectricField,
 )
+from opendust_jax.collisions import CollisionEvents
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from workflow import article_plasma, load_config  # noqa: E402
+
+
+class _NoOpArgonNullCollisionModel(ArgonNullCollisionModel):
+    """Keep the production collision grid but remove collision computation."""
+
+    def apply(self, key, velocities_m_s, thermal_speed_m_s, dt_s):
+        del key, thermal_speed_m_s, dt_s
+        no_event = jnp.zeros((velocities_m_s.shape[0],), dtype=bool)
+        return velocities_m_s, CollisionEvents(*(no_event for _ in range(6)))
+
+
+class _BenchmarkOpenDustJAX(OpenDustJAX):
+    """Production engine with an optional benchmark-only zero pair force."""
+
+    def __init__(self, *args, benchmark_skip_pair_force: bool, **kwargs):
+        self._benchmark_skip_pair_force = benchmark_skip_pair_force
+        super().__init__(*args, **kwargs)
+
+    def _pair_force(self, positions):
+        if self._benchmark_skip_pair_force:
+            return jnp.zeros_like(positions), jnp.asarray(0, dtype=jnp.int32)
+        return super()._pair_force(positions)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -83,6 +107,15 @@ def _parser() -> argparse.ArgumentParser:
         "--label",
         default="default",
         help="Safe filename label used to retain several benchmark variants.",
+    )
+    parser.add_argument(
+        "--component-mode",
+        choices=("full", "no-pair", "no-collisions", "fast-only"),
+        default="full",
+        help=(
+            "Select full physics or remove expensive components while retaining "
+            "the same collision/charging time grid."
+        ),
     )
     parser.add_argument(
         "--chunk-size",
@@ -189,7 +222,12 @@ def main() -> None:
     )
 
     speed_limit = presheath_preparation_speed_limit_m_s(plasma)
-    collision_model = ArgonNullCollisionModel(
+    collision_model_class = (
+        _NoOpArgonNullCollisionModel
+        if args.component_mode in ("no-collisions", "fast-only")
+        else ArgonNullCollisionModel
+    )
+    collision_model = collision_model_class(
         plasma, maximum_relative_speed_m_s=speed_limit
     )
     collision_subcycling = CollisionSubcyclingConfig(
@@ -256,13 +294,19 @@ def main() -> None:
         else None
     )
     setup_started = time.perf_counter()
-    engine = OpenDustJAX(
+    skip_pair_force = args.component_mode in ("no-pair", "fast-only")
+    collision_computation_enabled = args.component_mode not in (
+        "no-collisions",
+        "fast-only",
+    )
+    engine = _BenchmarkOpenDustJAX(
         plasma,
         simulation,
         dust,
         background=background,
         collision_model=collision_model,
         diagnostics=diagnostics,
+        benchmark_skip_pair_force=skip_pair_force,
     )
     engine_setup_s = time.perf_counter() - setup_started
 
@@ -272,7 +316,8 @@ def main() -> None:
         f"case={case.name}, ions={config.particle_count}, dust={len(dust)}, "
         f"steps={args.steps}, dt={dt_s:.6e} s, "
         f"Ncoll={engine.collision_substeps}, Ncharge={engine.charging_substeps}, "
-        f"Nsegments={engine.integration_segments}, diagnostics={args.diagnostics}",
+        f"Nsegments={engine.integration_segments}, mode={args.component_mode}, "
+        f"diagnostics={args.diagnostics}",
         flush=True,
     )
     print(f"engine setup: {engine_setup_s:.3f} s", flush=True)
@@ -313,6 +358,9 @@ def main() -> None:
         "case": asdict(case),
         "background": str(background_path),
         "background_fingerprint": background.fingerprint,
+        "component_mode": args.component_mode,
+        "pair_force_enabled": not skip_pair_force,
+        "collision_computation_enabled": collision_computation_enabled,
         "simulation": asdict(simulation),
         "resolved": {
             "ion_plasma_frequency_s": recommendation.ion_plasma_frequency_s,
@@ -323,11 +371,21 @@ def main() -> None:
             "maximum_fast_dt_s": engine.maximum_fast_dt_s,
             # initial_state() evaluates the complete force once, and run()
             # initializes its scan carry with another pair/fast evaluation.
-            "pair_force_calls_including_initialization": args.steps + 2,
+            "scheduled_pair_force_calls_including_initialization": args.steps + 2,
+            "executed_pair_force_calls": (
+                0 if skip_pair_force else args.steps + 2
+            ),
             "fast_force_calls_including_initialization": (
                 args.steps * engine.integration_segments + 2
             ),
-            "collision_operator_calls": args.steps * engine.collision_substeps,
+            "scheduled_collision_operator_calls": (
+                args.steps * engine.collision_substeps
+            ),
+            "executed_collision_computations": (
+                0
+                if not collision_computation_enabled
+                else args.steps * engine.collision_substeps
+            ),
             "diagnostic_samples": diagnostic_samples,
             "full_production_steps": full_steps,
         },

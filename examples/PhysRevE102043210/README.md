@@ -136,6 +136,36 @@ sbatch slurm_chain_benchmark.sh --label charge-64 --charging-substeps 64
 sbatch slurm_chain_benchmark.sh --label longer --steps 64 --repeat 3
 ```
 
+To measure which part dominates while retaining the same 286-segment merged
+time grid, use the component modes. The collision-disabled modes replace the
+physical collision operator with a no-op but leave all ten collision grid
+boundaries in place; the pair-disabled modes replace only the outer ion-ion
+force with zeros:
+
+```bash
+# Fast grid only: no diagnostics, ion-ion force, or collision calculation.
+sbatch slurm_chain_benchmark.sh \
+  --label fast-only --component-mode fast-only --no-diagnostics
+
+# Individual controls for attributing pair and collision costs.
+sbatch slurm_chain_benchmark.sh \
+  --label no-pair --component-mode no-pair --no-diagnostics
+sbatch slurm_chain_benchmark.sh \
+  --label no-collisions --component-mode no-collisions --no-diagnostics
+```
+
+Compare these against a diagnostics-free full-physics control:
+
+```bash
+sbatch slurm_chain_benchmark.sh \
+  --label full-no-diagnostics --component-mode full --no-diagnostics
+```
+
+The four runs have identical particle count, initial state, outer step,
+charging grid, collision grid, and number of fast segments. Their measured
+time differences therefore isolate the requested components without changing
+the dominant loop length.
+
 Use the same command and background before and after a code optimization.  The
 warm-up compiles the exact measured scan shape and is excluded from the
 reported median.  Pass `--warmup 0` only when end-to-end JIT time itself is the
