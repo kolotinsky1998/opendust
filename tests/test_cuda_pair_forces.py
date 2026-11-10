@@ -14,11 +14,18 @@ if str(SRC_DIR) not in sys.path:
 
 from opendust_jax.cuda_pair_forces import (
     cuda_pair_forces_available,
+    dust_orbit_forces_cuda,
     external_forces_cuda,
+    ion_dust_forces_cuda,
     softened_yukawa_forces_cuda,
     softened_yukawa_forces_cuda_with_stats,
 )
-from opendust_jax.external_forces import external_forces_jax
+from opendust_jax.external_forces import (
+    dust_orbit_forces_jax,
+    external_forces_jax,
+    ion_dust_forces_jax,
+)
+from opendust_jax.physics import background_force_N
 
 
 def numpy_reference(positions, prefactor, screening_length, softening):
@@ -47,6 +54,35 @@ def numpy_reference(positions, prefactor, screening_length, softening):
 def test_cuda_frontend_rejects_invalid_shape_before_loading_library():
     with pytest.raises(ValueError, match="shape"):
         softened_yukawa_forces_cuda(jnp.zeros((4, 2)), 1.0, 1.0, 0.0)
+
+
+def test_split_external_jax_components_match_fused_reference():
+    rng = np.random.default_rng(90)
+    positions = jnp.asarray(rng.normal(size=(13, 3)), jnp.float32)
+    dust_positions = jnp.asarray([[0.2, -0.1, 0.3], [-0.4, 0.2, -0.5]], jnp.float32)
+    dust_charges = jnp.asarray([-0.7, -1.1], jnp.float32)
+    coefficients = jnp.asarray(rng.normal(scale=1e-4, size=15), jnp.float32)
+    ion_charge, screening_length, electric_field = 1.3, 0.8, 0.25
+    fused_force, fused_orbit = external_forces_jax(
+        positions,
+        dust_positions,
+        dust_charges,
+        coefficients,
+        ion_charge,
+        screening_length,
+        electric_field,
+    )
+    fast = ion_dust_forces_jax(
+        positions, dust_positions, dust_charges, ion_charge, electric_field
+    )
+    background = background_force_N(
+        positions, ion_charge, coefficients, screening_length, ion_charge
+    )
+    orbit = dust_orbit_forces_jax(
+        positions, dust_positions, dust_charges, ion_charge, screening_length
+    )
+    np.testing.assert_allclose(fast + background, fused_force, rtol=2e-6)
+    np.testing.assert_allclose(orbit, fused_orbit, rtol=2e-6)
 
 
 @pytest.mark.skipif(
@@ -116,4 +152,34 @@ def test_fused_external_cuda_matches_jax_reference():
     )
     np.testing.assert_allclose(
         np.asarray(actual[1]), np.asarray(expected[1]), rtol=5e-5, atol=3e-4
+    )
+
+
+@pytest.mark.skipif(
+    not cuda_pair_forces_available(),
+    reason="CUDA FFI force library is not built on a JAX GPU host",
+)
+def test_split_external_cuda_matches_jax_reference():
+    rng = np.random.default_rng(92)
+    positions = jnp.asarray(rng.normal(size=(67, 3)), jnp.float32)
+    dust_positions = jnp.asarray([[0.2, -0.1, 0.3], [-0.4, 0.2, -0.5]], jnp.float32)
+    dust_charges = jnp.asarray([-0.7, -1.1], jnp.float32)
+    ion_charge, screening_length, electric_field = 1.3, 0.8, 0.25
+    expected_fast = ion_dust_forces_jax(
+        positions, dust_positions, dust_charges, ion_charge, electric_field
+    )
+    expected_orbit = dust_orbit_forces_jax(
+        positions, dust_positions, dust_charges, ion_charge, screening_length
+    )
+    actual_fast = jax.jit(ion_dust_forces_cuda)(
+        positions, dust_positions, dust_charges, ion_charge, electric_field
+    )
+    actual_orbit = jax.jit(dust_orbit_forces_cuda)(
+        positions, dust_positions, dust_charges, ion_charge, screening_length
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual_fast), np.asarray(expected_fast), rtol=2e-5, atol=3e-4
+    )
+    np.testing.assert_allclose(
+        np.asarray(actual_orbit), np.asarray(expected_orbit), rtol=5e-5, atol=3e-4
     )

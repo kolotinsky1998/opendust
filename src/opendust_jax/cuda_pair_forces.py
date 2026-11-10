@@ -13,6 +13,8 @@ import jax.numpy as jnp
 
 _TARGET_NAME = "opendust_softened_yukawa_cuda"
 _EXTERNAL_TARGET_NAME = "opendust_external_forces_cuda"
+_ION_DUST_TARGET_NAME = "opendust_ion_dust_forces_cuda"
+_DUST_ORBIT_TARGET_NAME = "opendust_dust_orbit_forces_cuda"
 _DEFAULT_LIBRARY = Path(__file__).with_name("_cuda") / "libopendust_jax_pair_forces.so"
 _registration_lock = threading.Lock()
 _library: ctypes.CDLL | None = None
@@ -51,6 +53,16 @@ def _register_cuda_target() -> None:
             jax.ffi.register_ffi_target(
                 _EXTERNAL_TARGET_NAME,
                 jax.ffi.pycapsule(external_handler),
+                platform="CUDA",
+            )
+            jax.ffi.register_ffi_target(
+                _ION_DUST_TARGET_NAME,
+                jax.ffi.pycapsule(library.OpenDustIonDustForces),
+                platform="CUDA",
+            )
+            jax.ffi.register_ffi_target(
+                _DUST_ORBIT_TARGET_NAME,
+                jax.ffi.pycapsule(library.OpenDustDustOrbitForces),
                 platform="CUDA",
             )
         except Exception as exc:
@@ -191,10 +203,75 @@ def external_forces_cuda(
     )
 
 
+def _validate_ion_dust_inputs(
+    positions: jax.Array,
+    dust_positions: jax.Array,
+    dust_charges: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    positions = jnp.asarray(positions, dtype=jnp.float32)
+    dust_positions = jnp.asarray(dust_positions, dtype=jnp.float32)
+    dust_charges = jnp.asarray(dust_charges, dtype=jnp.float32)
+    if positions.ndim != 2 or positions.shape[1] != 3 or positions.shape[0] == 0:
+        raise ValueError("positions must have shape (N, 3) with N > 0")
+    if dust_positions.ndim != 2 or dust_positions.shape[1] != 3:
+        raise ValueError("dust_positions must have shape (D, 3)")
+    if dust_charges.shape != (dust_positions.shape[0],):
+        raise ValueError("dust_charges must have shape (D,)")
+    return positions, dust_positions, dust_charges
+
+
+def ion_dust_forces_cuda(
+    positions: jax.Array,
+    dust_positions: jax.Array,
+    dust_charges: jax.Array,
+    ion_charge: float | jax.Array,
+    electric_field: float | jax.Array,
+) -> jax.Array:
+    """Return fast ion<-dust forces plus the imposed axial field."""
+    positions, dust_positions, dust_charges = _validate_ion_dust_inputs(
+        positions, dust_positions, dust_charges
+    )
+    parameters = tuple(
+        jnp.asarray(value, dtype=jnp.float32)
+        for value in (ion_charge, electric_field)
+    )
+    _register_cuda_target()
+    result = jax.ShapeDtypeStruct(positions.shape, jnp.float32)
+    return jax.ffi.ffi_call(_ION_DUST_TARGET_NAME, result)(
+        positions, dust_positions, dust_charges, *parameters
+    )
+
+
+def dust_orbit_forces_cuda(
+    positions: jax.Array,
+    dust_positions: jax.Array,
+    dust_charges: jax.Array,
+    ion_charge: float | jax.Array,
+    screening_length: float | jax.Array,
+) -> jax.Array:
+    """Return endpoint screened dust<-ion forces for all dust particles."""
+    positions, dust_positions, dust_charges = _validate_ion_dust_inputs(
+        positions, dust_positions, dust_charges
+    )
+    if isinstance(screening_length, Real) and screening_length <= 0.0:
+        raise ValueError("screening_length must be positive")
+    parameters = tuple(
+        jnp.asarray(value, dtype=jnp.float32)
+        for value in (ion_charge, screening_length)
+    )
+    _register_cuda_target()
+    result = jax.ShapeDtypeStruct(dust_positions.shape, jnp.float32)
+    return jax.ffi.ffi_call(_DUST_ORBIT_TARGET_NAME, result)(
+        positions, dust_positions, dust_charges, *parameters
+    )
+
+
 __all__ = [
     "cuda_pair_forces_available",
     "cuda_pair_forces_library_path",
+    "dust_orbit_forces_cuda",
     "external_forces_cuda",
+    "ion_dust_forces_cuda",
     "softened_yukawa_forces_cuda",
     "softened_yukawa_forces_cuda_with_stats",
 ]

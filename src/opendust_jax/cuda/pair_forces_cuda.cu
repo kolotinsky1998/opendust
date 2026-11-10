@@ -265,6 +265,73 @@ __global__ void ExternalForcesKernel(
   ion_forces[3 * ion + 2] = fz;
 }
 
+__global__ void IonDustForcesKernel(
+    const float* __restrict__ positions,
+    const float* __restrict__ dust_positions,
+    const float* __restrict__ dust_charges,
+    const float* __restrict__ ion_charge_ptr,
+    const float* __restrict__ electric_field_ptr,
+    float* __restrict__ ion_forces, int num_ions, int num_dust) {
+  const int ion = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ion >= num_ions) return;
+  const float ion_charge = *ion_charge_ptr;
+  const float x = positions[3 * ion];
+  const float y = positions[3 * ion + 1];
+  const float z = positions[3 * ion + 2];
+  float fx = 0.0f;
+  float fy = 0.0f;
+  float fz = ion_charge * (*electric_field_ptr);
+  for (int dust = 0; dust < num_dust; ++dust) {
+    const float dx = x - dust_positions[3 * dust];
+    const float dy = y - dust_positions[3 * dust + 1];
+    const float dz = z - dust_positions[3 * dust + 2];
+    const float r2 = fmaf(dx, dx, fmaf(dy, dy, dz * dz));
+    if (r2 <= 0.0f) continue;
+    const float inverse_r = rsqrtf(r2);
+    const float bare = kCoulombConstant * ion_charge * dust_charges[dust] *
+                       inverse_r * inverse_r * inverse_r;
+    fx += bare * dx;
+    fy += bare * dy;
+    fz += bare * dz;
+  }
+  ion_forces[3 * ion] = fx;
+  ion_forces[3 * ion + 1] = fy;
+  ion_forces[3 * ion + 2] = fz;
+}
+
+__global__ void DustOrbitForcesKernel(
+    const float* __restrict__ positions,
+    const float* __restrict__ dust_positions,
+    const float* __restrict__ dust_charges,
+    const float* __restrict__ ion_charge_ptr,
+    const float* __restrict__ screening_length_ptr,
+    float* __restrict__ dust_orbit_forces, int num_ions, int num_dust) {
+  const int ion = blockIdx.x * blockDim.x + threadIdx.x;
+  if (ion >= num_ions) return;
+  const float ion_charge = *ion_charge_ptr;
+  const float inverse_screening_length = 1.0f / (*screening_length_ptr);
+  const float x = positions[3 * ion];
+  const float y = positions[3 * ion + 1];
+  const float z = positions[3 * ion + 2];
+  for (int dust = 0; dust < num_dust; ++dust) {
+    const float dx = x - dust_positions[3 * dust];
+    const float dy = y - dust_positions[3 * dust + 1];
+    const float dz = z - dust_positions[3 * dust + 2];
+    const float r2 = fmaf(dx, dx, fmaf(dy, dy, dz * dz));
+    if (r2 <= 0.0f) continue;
+    const float inverse_r = rsqrtf(r2);
+    const float r = r2 * inverse_r;
+    const float screened =
+        kCoulombConstant * ion_charge * dust_charges[dust] *
+        __expf(-r * inverse_screening_length) *
+        (inverse_r * inverse_r * inverse_r +
+         inverse_screening_length * inverse_r * inverse_r);
+    atomicAdd(dust_orbit_forces + 3 * dust, -screened * dx);
+    atomicAdd(dust_orbit_forces + 3 * dust + 1, -screened * dy);
+    atomicAdd(dust_orbit_forces + 3 * dust + 2, -screened * dz);
+  }
+}
+
 ffi::Error CudaError(const char* operation, cudaError_t error) {
   return ffi::Error::Internal(std::string(operation) + ": " +
                               cudaGetErrorString(error));
@@ -397,6 +464,92 @@ ffi::Error ExternalForcesHost(
   return ffi::Error::Success();
 }
 
+ffi::Error IonDustForcesHost(
+    cudaStream_t stream, ffi::Buffer<ffi::F32> positions,
+    ffi::Buffer<ffi::F32> dust_positions,
+    ffi::Buffer<ffi::F32> dust_charges,
+    ffi::Buffer<ffi::F32> ion_charge,
+    ffi::Buffer<ffi::F32> electric_field,
+    ffi::ResultBuffer<ffi::F32> ion_forces) {
+  const auto ion_dims = positions.dimensions();
+  const auto dust_dims = dust_positions.dimensions();
+  if (ion_dims.size() != 2 || ion_dims[1] != 3 ||
+      dust_dims.size() != 2 || dust_dims[1] != 3 ||
+      dust_charges.dimensions().size() != 1 ||
+      dust_charges.dimensions()[0] != dust_dims[0]) {
+    return ffi::Error::InvalidArgument("invalid ion or dust array shape");
+  }
+  if (ion_charge.dimensions().size() != 0 ||
+      electric_field.dimensions().size() != 0) {
+    return ffi::Error::InvalidArgument("physical parameters must be scalars");
+  }
+  if (ion_forces->dimensions().size() != 2 ||
+      ion_forces->dimensions()[0] != ion_dims[0] ||
+      ion_forces->dimensions()[1] != 3) {
+    return ffi::Error::InvalidArgument("invalid ion force shape");
+  }
+  const std::int64_t n64 = ion_dims[0];
+  const std::int64_t d64 = dust_dims[0];
+  if (n64 <= 0 || n64 > INT32_MAX || d64 > INT32_MAX) {
+    return ffi::Error::InvalidArgument("particle count is out of range");
+  }
+  const int blocks =
+      (static_cast<int>(n64) + kThreadsPerBlock - 1) / kThreadsPerBlock;
+  IonDustForcesKernel<<<blocks, kThreadsPerBlock, 0, stream>>>(
+      positions.typed_data(), dust_positions.typed_data(),
+      dust_charges.typed_data(), ion_charge.typed_data(),
+      electric_field.typed_data(), ion_forces->typed_data(),
+      static_cast<int>(n64), static_cast<int>(d64));
+  const cudaError_t error = cudaGetLastError();
+  if (error != cudaSuccess) return CudaError("kernel launch failed", error);
+  return ffi::Error::Success();
+}
+
+ffi::Error DustOrbitForcesHost(
+    cudaStream_t stream, ffi::Buffer<ffi::F32> positions,
+    ffi::Buffer<ffi::F32> dust_positions,
+    ffi::Buffer<ffi::F32> dust_charges,
+    ffi::Buffer<ffi::F32> ion_charge,
+    ffi::Buffer<ffi::F32> screening_length,
+    ffi::ResultBuffer<ffi::F32> dust_orbit_forces) {
+  const auto ion_dims = positions.dimensions();
+  const auto dust_dims = dust_positions.dimensions();
+  if (ion_dims.size() != 2 || ion_dims[1] != 3 ||
+      dust_dims.size() != 2 || dust_dims[1] != 3 ||
+      dust_charges.dimensions().size() != 1 ||
+      dust_charges.dimensions()[0] != dust_dims[0]) {
+    return ffi::Error::InvalidArgument("invalid ion or dust array shape");
+  }
+  if (ion_charge.dimensions().size() != 0 ||
+      screening_length.dimensions().size() != 0) {
+    return ffi::Error::InvalidArgument("physical parameters must be scalars");
+  }
+  if (dust_orbit_forces->dimensions().size() != 2 ||
+      dust_orbit_forces->dimensions()[0] != dust_dims[0] ||
+      dust_orbit_forces->dimensions()[1] != 3) {
+    return ffi::Error::InvalidArgument("invalid dust orbit force shape");
+  }
+  const std::int64_t n64 = ion_dims[0];
+  const std::int64_t d64 = dust_dims[0];
+  if (n64 <= 0 || n64 > INT32_MAX || d64 > INT32_MAX) {
+    return ffi::Error::InvalidArgument("particle count is out of range");
+  }
+  if (d64 == 0) return ffi::Error::Success();
+  cudaError_t error = cudaMemsetAsync(dust_orbit_forces->typed_data(), 0,
+                                      3 * d64 * sizeof(float), stream);
+  if (error != cudaSuccess) return CudaError("cudaMemsetAsync failed", error);
+  const int blocks =
+      (static_cast<int>(n64) + kThreadsPerBlock - 1) / kThreadsPerBlock;
+  DustOrbitForcesKernel<<<blocks, kThreadsPerBlock, 0, stream>>>(
+      positions.typed_data(), dust_positions.typed_data(),
+      dust_charges.typed_data(), ion_charge.typed_data(),
+      screening_length.typed_data(), dust_orbit_forces->typed_data(),
+      static_cast<int>(n64), static_cast<int>(d64));
+  error = cudaGetLastError();
+  if (error != cudaSuccess) return CudaError("kernel launch failed", error);
+  return ffi::Error::Success();
+}
+
 }  // namespace
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
@@ -422,4 +575,26 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F32>>()
         .Arg<ffi::Buffer<ffi::F32>>()
         .Ret<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::F32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    OpenDustIonDustForces, IonDustForcesHost,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Ret<ffi::Buffer<ffi::F32>>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    OpenDustDustOrbitForces, DustOrbitForcesHost,
+    ffi::Ffi::Bind()
+        .Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::F32>>()
         .Ret<ffi::Buffer<ffi::F32>>());

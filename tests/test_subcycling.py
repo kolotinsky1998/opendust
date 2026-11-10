@@ -26,7 +26,7 @@ from opendust_jax import (
     SimulationState,
     recommend_main_timestep,
 )
-from opendust_jax.physics import update_dust_charges_C
+from opendust_jax.physics import dust_orbit_forces_N, update_dust_charges_C
 from opendust_jax.simulation import _merged_substep_schedule
 from opendust_jax.timestepping import resolve_collision_substeps
 
@@ -332,6 +332,92 @@ def test_one_substep_matches_legacy_integrator_without_reinjection():
         rtol=2.0e-6,
         atol=1.0e-7,
     )
+
+
+@pytest.mark.parametrize("with_collision_grid", [False, True])
+def test_background_is_integrated_only_on_outer_steps(with_collision_grid):
+    plasma = maxwellian()
+    common = dict(
+        particle_count=1,
+        steps=2,
+        dt_s=0.1,
+        collision_subcycling=(
+            CollisionSubcyclingConfig(substeps=1) if with_collision_grid else None
+        ),
+    )
+    one = engine(
+        plasma,
+        simulation(
+            **common,
+            charging_subcycling=ChargingSubcyclingConfig(substeps=1),
+        ),
+    )
+    many = engine(
+        plasma,
+        simulation(
+            **common,
+            charging_subcycling=ChargingSubcyclingConfig(substeps=4),
+        ),
+    )
+
+    def install_harmonic_background(runner):
+        runner._background_force = lambda positions: (
+            -4.0 * runner.superion_mass_kg * positions
+        )
+
+    install_harmonic_background(one)
+    install_harmonic_background(many)
+    state = SimulationState(
+        positions_m=jnp.asarray([[0.1, 0.0, 0.0]], jnp.float32),
+        velocities_m_s=jnp.zeros((1, 3), jnp.float32),
+        forces_N=jnp.zeros((1, 3), jnp.float32),
+        dust_charges_C=jnp.zeros((0,), jnp.float32),
+        step=jnp.asarray(0, jnp.int32),
+        prng_key=jax.random.PRNGKey(17),
+    )
+    one_result = one.run(state)
+    many_result = many.run(state)
+    np.testing.assert_allclose(
+        many_result.final_state.positions_m,
+        one_result.final_state.positions_m,
+        rtol=2e-6,
+        atol=1e-7,
+    )
+    np.testing.assert_allclose(
+        many_result.final_state.velocities_m_s,
+        one_result.final_state.velocities_m_s,
+        rtol=2e-6,
+        atol=1e-7,
+    )
+
+
+def test_endpoint_orbit_matches_direct_reference():
+    plasma = maxwellian()
+    dust = DustParticleSI(
+        (0.0, 0.0, 0.0),
+        1.0e-4,
+        initial_charge_C=-1.0e-18,
+        charge_mode="fixed",
+    )
+    runner = engine(
+        plasma,
+        simulation(
+            particle_count=2,
+            steps=1,
+            dt_s=1.0e-8,
+            charging_subcycling=ChargingSubcyclingConfig(substeps=4),
+        ),
+        [dust],
+    )
+    result = runner.run()
+    expected = dust_orbit_forces_N(
+        result.final_state.positions_m,
+        runner.superion_charge_C,
+        runner._dust_positions,
+        result.final_state.dust_charges_C,
+        runner.screening_length_m,
+    )
+    np.testing.assert_allclose(result.dust_orbit_forces_N[-1], expected, rtol=2e-6)
 
 
 def test_one_collision_substep_matches_legacy_without_collisions_or_reinjection():

@@ -24,7 +24,8 @@ from opendust_jax.collisions import (
 )
 from opendust_jax.cuda_pair_forces import (
     cuda_pair_forces_available,
-    external_forces_cuda,
+    dust_orbit_forces_cuda,
+    ion_dust_forces_cuda,
     softened_yukawa_forces_cuda_with_stats,
 )
 from opendust_jax.diagnostics import (
@@ -33,7 +34,10 @@ from opendust_jax.diagnostics import (
     plane_potential_snapshot_V,
     write_plane_diagnostics,
 )
-from opendust_jax.external_forces import external_forces_jax
+from opendust_jax.external_forces import (
+    dust_orbit_forces_jax,
+    ion_dust_forces_jax,
+)
 from opendust_jax.models import (
     ArgonPresheathPlasmaSI,
     BOLTZMANN_J_K,
@@ -65,8 +69,8 @@ from opendust_jax.timestepping import resolve_collision_substeps
 class _RunCarry(NamedTuple):
     state: SimulationState
     pair_forces_N: jax.Array
+    background_forces_N: jax.Array
     fast_forces_N: jax.Array
-    orbit_in_N: jax.Array
     potential_sum: jax.Array
     density_sum: jax.Array
     sample_count: jax.Array
@@ -439,48 +443,71 @@ class OpenDustJAX:
             coincident = jnp.asarray(0, jnp.int32)
         return pair, coincident
 
-    def _fast_force(
-        self, positions: jax.Array, dust_charges: jax.Array
-    ) -> tuple[jax.Array, jax.Array]:
+    def _fast_force(self, positions: jax.Array, dust_charges: jax.Array) -> jax.Array:
         electric_field = (
             self.plasma.electric_field_V_m
             if isinstance(self.plasma, FieldDrivenPlasmaSI)
             else 0.0
         )
         if self.simulation.force_backend == "cuda":
-            external, orbit = external_forces_cuda(
+            external = ion_dust_forces_cuda(
                 positions,
                 self._dust_positions,
                 dust_charges,
-                self._background_coefficients,
                 self.superion_charge_C,
-                self.screening_length_m,
                 electric_field,
             )
         else:
-            external, orbit = external_forces_jax(
+            external = ion_dust_forces_jax(
                 positions,
                 self._dust_positions,
                 dust_charges,
-                self._background_coefficients,
                 self.superion_charge_C,
-                self.screening_length_m,
                 electric_field,
             )
         if isinstance(self.background, CylindricalSplineBackground):
-            external = external + self.background.force_N(
-                positions, self.superion_charge_C
-            )
             field_z = self._axial_electric_field_V_m(positions[:, 2])
             external = external.at[:, 2].add(self.superion_charge_C * field_z)
-        return external, orbit
+        return external
+
+    def _background_force(self, positions: jax.Array) -> jax.Array:
+        if isinstance(self.background, CylindricalSplineBackground):
+            return self.background.force_N(positions, self.superion_charge_C)
+        return background_force_N(
+            positions,
+            self.superion_charge_C,
+            self._background_coefficients,
+            self.screening_length_m,
+            self.superion_charge_C,
+        )
+
+    def _orbit_force(
+        self, positions: jax.Array, dust_charges: jax.Array
+    ) -> jax.Array:
+        if self.simulation.force_backend == "cuda":
+            return dust_orbit_forces_cuda(
+                positions,
+                self._dust_positions,
+                dust_charges,
+                self.superion_charge_C,
+                self.screening_length_m,
+            )
+        return dust_orbit_forces_jax(
+            positions,
+            self._dust_positions,
+            dust_charges,
+            self.superion_charge_C,
+            self.screening_length_m,
+        )
 
     def _force(
         self, positions: jax.Array, dust_charges: jax.Array
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         pair, coincident = self._pair_force(positions)
-        external, orbit = self._fast_force(positions, dust_charges)
-        total = pair + external
+        fast = self._fast_force(positions, dust_charges)
+        background = self._background_force(positions)
+        orbit = self._orbit_force(positions, dust_charges)
+        total = pair + background + fast
         return total, orbit, coincident
 
     def initial_state(self) -> SimulationState:
@@ -488,9 +515,15 @@ class OpenDustJAX:
         charges = jnp.asarray(
             [d.initial_charge_C for d in self.dust_particles], dtype=jnp.float32
         )
-        force, _, _ = self._force(jnp.asarray(positions), charges)
+        device_positions = jnp.asarray(positions)
+        pair, _ = self._pair_force(device_positions)
+        force = (
+            pair
+            + self._background_force(device_positions)
+            + self._fast_force(device_positions, charges)
+        )
         return SimulationState(
-            jnp.asarray(positions),
+            device_positions,
             jnp.asarray(velocities),
             force,
             charges,
@@ -650,8 +683,8 @@ class OpenDustJAX:
         pair_forces_N: jax.Array,
         coincident: jax.Array,
         collision_events: CollisionEvents,
+        background_forces_N: jax.Array | None = None,
         fast_forces_N: jax.Array | None = None,
-        orbit_in_N: jax.Array | None = None,
         collision_counts: tuple[jax.Array, ...] | None = None,
         collision_operator_calls: jax.Array | int = 0,
     ) -> _RunCarry:
@@ -718,8 +751,10 @@ class OpenDustJAX:
         return _RunCarry(
             next_state,
             pair_forces_N,
+            carry.background_forces_N
+            if background_forces_N is None
+            else background_forces_N,
             carry.fast_forces_N if fast_forces_N is None else fast_forces_N,
-            carry.orbit_in_N if orbit_in_N is None else orbit_in_N,
             potential_sum,
             density_sum,
             sample_count,
@@ -877,7 +912,8 @@ class OpenDustJAX:
             )
 
         velocity = velocity + 0.5 * self.simulation.dt_s * (
-            carry.pair_forces_N / self.superion_mass_kg
+            (carry.pair_forces_N + carry.background_forces_N)
+            / self.superion_mass_kg
         )
         dust_count = len(self.dust_particles)
         ion_temperature = (
@@ -888,7 +924,7 @@ class OpenDustJAX:
         initial_momentum = jnp.zeros((dust_count, 3), jnp.float32)
 
         def fast_substep(inner, substep_index):
-            positions, velocities, charges, momentum, fast_force, orbit_in = inner
+            positions, velocities, charges, momentum, fast_force = inner
             half_velocity = velocities + 0.5 * self.charging_dt_s * (
                 fast_force / self.superion_mass_kg
             )
@@ -940,7 +976,7 @@ class OpenDustJAX:
             positions, injected_velocity = self._reinject(
                 drifted, half_velocity, invalid, reinjection_key
             )
-            next_fast, next_orbit = self._fast_force(positions, charges)
+            next_fast = self._fast_force(positions, charges)
             velocities = injected_velocity + jnp.where(
                 invalid[:, None],
                 0.0,
@@ -952,7 +988,6 @@ class OpenDustJAX:
                 charges,
                 momentum,
                 next_fast,
-                next_orbit,
             ), None
 
         initial_inner = (
@@ -961,22 +996,23 @@ class OpenDustJAX:
             state.dust_charges_C,
             initial_momentum,
             carry.fast_forces_N,
-            carry.orbit_in_N,
         )
         final_inner, _ = jax.lax.scan(
             fast_substep,
             initial_inner,
             jnp.arange(self.charging_substeps, dtype=jnp.int32),
         )
-        positions, velocity, charges, momentum, fast_force, orbit_in = final_inner
+        positions, velocity, charges, momentum, fast_force = final_inner
         pair_force, coincident = self._pair_force(positions)
+        background_force = self._background_force(positions)
         completed_velocity = velocity + 0.5 * self.simulation.dt_s * (
-            pair_force / self.superion_mass_kg
+            (pair_force + background_force) / self.superion_mass_kg
         )
-        force = pair_force + fast_force
+        force = pair_force + background_force + fast_force
         next_state = SimulationState(
             positions, completed_velocity, force, charges, state.step + 1, key
         )
+        orbit_in = self._orbit_force(positions, charges)
         orbit, dust_dust, dust_external = self._dust_force_components(
             positions, charges, orbit_in
         )
@@ -987,8 +1023,8 @@ class OpenDustJAX:
             pair_force,
             coincident,
             collision_events,
+            background_force,
             fast_force,
-            orbit_in,
             collision_operator_calls=(
                 1
                 if isinstance(
@@ -1006,7 +1042,8 @@ class OpenDustJAX:
         next_key, base_step_key = jax.random.split(state.prng_key)
         step_key = jax.random.fold_in(base_step_key, state.step)
         velocity = state.velocities_m_s + 0.5 * self.simulation.dt_s * (
-            carry.pair_forces_N / self.superion_mass_kg
+            (carry.pair_forces_N + carry.background_forces_N)
+            / self.superion_mass_kg
         )
         dust_count = len(self.dust_particles)
         ion_temperature = (
@@ -1023,7 +1060,6 @@ class OpenDustJAX:
                 charges,
                 momentum,
                 fast_force,
-                orbit_in,
                 candidates,
                 elastic_count,
                 cx_count,
@@ -1160,7 +1196,7 @@ class OpenDustJAX:
             positions, injected_velocity = self._reinject(
                 drifted, half_velocity, invalid, reinjection_key
             )
-            next_fast, next_orbit = self._fast_force(positions, charges)
+            next_fast = self._fast_force(positions, charges)
             velocities = injected_velocity + jnp.where(
                 invalid[:, None],
                 0.0,
@@ -1172,7 +1208,6 @@ class OpenDustJAX:
                 charges,
                 momentum,
                 next_fast,
-                next_orbit,
                 candidates + counts[0],
                 elastic_count + counts[1],
                 cx_count + counts[2],
@@ -1188,7 +1223,6 @@ class OpenDustJAX:
             state.dust_charges_C,
             jnp.zeros((dust_count, 3), jnp.float32),
             carry.fast_forces_N,
-            carry.orbit_in_N,
             zero_count,
             zero_count,
             zero_count,
@@ -1213,7 +1247,6 @@ class OpenDustJAX:
             charges,
             momentum,
             fast_force,
-            orbit_in,
             candidate_count,
             elastic_count,
             cx_count,
@@ -1223,13 +1256,15 @@ class OpenDustJAX:
             operator_calls,
         ) = final_inner
         pair_force, coincident = self._pair_force(positions)
+        background_force = self._background_force(positions)
         completed_velocity = velocity + 0.5 * self.simulation.dt_s * (
-            pair_force / self.superion_mass_kg
+            (pair_force + background_force) / self.superion_mass_kg
         )
-        force = pair_force + fast_force
+        force = pair_force + background_force + fast_force
         next_state = SimulationState(
             positions, completed_velocity, force, charges, state.step + 1, next_key
         )
+        orbit_in = self._orbit_force(positions, charges)
         orbit, dust_dust, dust_external = self._dust_force_components(
             positions, charges, orbit_in
         )
@@ -1244,8 +1279,8 @@ class OpenDustJAX:
             pair_force,
             coincident,
             empty_events,
+            background_force,
             fast_force,
-            orbit_in,
             (
                 candidate_count,
                 elastic_count,
@@ -1273,14 +1308,18 @@ class OpenDustJAX:
             if self.diagnostics is not None else (0, 0)
         )
         initial_pair_force, initial_coincident = self._pair_force(state.positions_m)
-        initial_fast_force, initial_orbit_in = self._fast_force(
+        initial_background_force = self._background_force(state.positions_m)
+        initial_fast_force = self._fast_force(
+            state.positions_m, state.dust_charges_C
+        )
+        initial_orbit_in = self._orbit_force(
             state.positions_m, state.dust_charges_C
         )
         carry = _RunCarry(
             state,
             initial_pair_force,
+            initial_background_force,
             initial_fast_force,
-            initial_orbit_in,
             jnp.zeros(grid_shape, accumulator_dtype),
             jnp.zeros(grid_shape, accumulator_dtype),
             jnp.asarray(0, jnp.int32),
