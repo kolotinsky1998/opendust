@@ -3,7 +3,7 @@
 #SBATCH --account=proj_1827
 #SBATCH --array=0-2
 #SBATCH --gres=gpu:1
-#SBATCH --time=48:00:00
+#SBATCH --time=01:00:00
 set -euo pipefail
 
 if [[ $# -ne 1 || ( "$1" != "linear" && "$1" != "quadratic" ) ]]; then

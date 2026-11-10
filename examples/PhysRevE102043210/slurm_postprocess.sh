@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=od-figures
 #SBATCH --account=proj_1827
-#SBATCH --time=01:00:00
+#SBATCH --time=00:30:00
 set -euo pipefail
 
 EXAMPLE_DIR="${OPENDUST_EXAMPLE_DIR:-${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}}"

@@ -3,7 +3,7 @@
 #SBATCH --account=proj_1827
 #SBATCH --array=0-2
 #SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
+#SBATCH --time=00:30:00
 set -euo pipefail
 
 EXAMPLE_DIR="${OPENDUST_EXAMPLE_DIR:-${SLURM_SUBMIT_DIR:?SLURM_SUBMIT_DIR is not set}}"

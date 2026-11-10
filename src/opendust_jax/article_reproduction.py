@@ -118,7 +118,7 @@ class ArticleReproductionConfig:
     background_consecutive_blocks: int = 3
     background_minimum_transit_times: float = 4.0
     background_block_transit_times: float = 10.0
-    background_maximum_transit_times: float = 100.0
+    background_maximum_transit_times: float = 140.0
     background_averaging_blocks: int = 10
     smoke_project_invalid_fields: bool = False
 
