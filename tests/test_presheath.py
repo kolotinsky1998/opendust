@@ -213,7 +213,7 @@ def test_article_sampling_window_has_at_least_eighteen_profiles(
         minimum_transit_times=4.0,
         block_transit_times=10.0,
         maximum_transit_times=140.0,
-        consecutive_blocks=3,
+        consecutive_blocks=2,
         minimum_samples_per_convergence_window=18,
     )
     (

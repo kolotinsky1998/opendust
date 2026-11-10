@@ -115,7 +115,7 @@ class ArticleReproductionConfig:
     background_grid_spacing_screening_lengths: float = 0.1
     background_density_tolerance: float = 0.02
     background_flux_tolerance: float = 0.02
-    background_consecutive_blocks: int = 3
+    background_consecutive_blocks: int = 2
     background_minimum_transit_times: float = 4.0
     background_block_transit_times: float = 10.0
     background_maximum_transit_times: float = 140.0
