@@ -150,6 +150,7 @@ test/
 /examples/OpenDust2023/**/results/
 /examples/OpenDust2023/**/slurm-*.out
 /examples/OpenDust2023/**/slurm-*.err
+/examples/PhysRevE102043210/correlation_analysis/
 slurm-odj-fig*.out
 slurm-odj-fig*.err
 1-s2.0-S0010465523000917-main-2.pdf

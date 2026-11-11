@@ -6,6 +6,7 @@ import json
 import platform
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -35,10 +36,11 @@ def plane_potential_snapshot_V(
     softening_m: float,
     background_coefficients: jax.Array,
     *,
+    plane: Literal["xz", "yz"] = "xz",
     source_block_size: int = 4096,
     target_block_size: int = 256,
 ) -> jax.Array:
-    """Sum ion Yukawa potentials on y=0 without a full grid-by-ion array."""
+    """Sum ion Yukawa potentials on an axial plane without a full source array."""
     positions = jnp.asarray(positions_m, dtype=jnp.float32)
     x_axis_m = jnp.asarray(x_axis_m, dtype=jnp.float32)
     z_axis_m = jnp.asarray(z_axis_m, dtype=jnp.float32)
@@ -49,9 +51,13 @@ def plane_potential_snapshot_V(
         background_coefficients, dtype=jnp.float32
     )
     xx, zz = jnp.meshgrid(x_axis_m, z_axis_m, indexing="xy")
-    targets = jnp.stack(
-        (xx.ravel(), jnp.zeros(xx.size, dtype=jnp.float32), zz.ravel()), axis=1
-    )
+    zeros = jnp.zeros(xx.size, dtype=jnp.float32)
+    if plane == "xz":
+        targets = jnp.stack((xx.ravel(), zeros, zz.ravel()), axis=1)
+    elif plane == "yz":
+        targets = jnp.stack((zeros, xx.ravel(), zz.ravel()), axis=1)
+    else:
+        raise ValueError(f"unsupported diagnostic plane: {plane}")
     ion_sum = blocked_yukawa_sum(
         positions,
         targets,
@@ -82,8 +88,10 @@ def plane_cic_density_snapshot_m3(
     z_axis_m: jax.Array,
     slice_thickness_m: float,
     superion_weight: float,
+    *,
+    plane: Literal["xz", "yz"] = "xz",
 ) -> jax.Array:
-    """Deposit a y-slab onto x-z nodes with cloud-in-cell interpolation."""
+    """Deposit an axial slab onto its plane with cloud-in-cell interpolation."""
     positions = jnp.asarray(positions_m, dtype=jnp.float32)
     x_axis_m = jnp.asarray(x_axis_m, dtype=jnp.float32)
     z_axis_m = jnp.asarray(z_axis_m, dtype=jnp.float32)
@@ -91,7 +99,15 @@ def plane_cic_density_snapshot_m3(
     nx, nz = x_axis_m.size, z_axis_m.size
     dx = x_axis_m[1] - x_axis_m[0]
     dz = z_axis_m[1] - z_axis_m[0]
-    gx = (positions[:, 0] - x_axis_m[0]) / dx
+    if plane == "xz":
+        transverse = positions[:, 0]
+        normal = positions[:, 1]
+    elif plane == "yz":
+        transverse = positions[:, 1]
+        normal = positions[:, 0]
+    else:
+        raise ValueError(f"unsupported diagnostic plane: {plane}")
+    gx = (transverse - x_axis_m[0]) / dx
     gz = (positions[:, 2] - z_axis_m[0]) / dz
     ix0 = jnp.floor(gx).astype(jnp.int32)
     iz0 = jnp.floor(gz).astype(jnp.int32)
@@ -99,7 +115,7 @@ def plane_cic_density_snapshot_m3(
     iz0 = jnp.clip(iz0, 0, nz - 2)
     tx = jnp.clip(gx - ix0, 0.0, 1.0)
     tz = jnp.clip(gz - iz0, 0.0, 1.0)
-    selected = jnp.abs(positions[:, 1]) <= 0.5 * slice_thickness_m
+    selected = jnp.abs(normal) <= 0.5 * slice_thickness_m
     base_weight = jnp.asarray(superion_weight, jnp.float32) * selected
     grid = jnp.zeros((nz, nx), dtype=jnp.float32)
     grid = grid.at[iz0, ix0].add(base_weight * (1.0 - tx) * (1.0 - tz))
@@ -123,20 +139,35 @@ def write_plane_diagnostics(
     prefix.parent.mkdir(parents=True, exist_ok=True)
     npz_path = prefix.with_name(prefix.name + "_fields.npz")
     json_path = prefix.with_name(prefix.name + "_fields.json")
-    np.savez_compressed(
-        npz_path,
-        x_m=np.asarray(x_axis_m),
-        z_m=np.asarray(z_axis_m),
-        potential_V=np.asarray(potential_V),
-        ion_density_m3=np.asarray(ion_density_m3),
-        sample_count=np.asarray(len(sample_steps), dtype=np.int64),
-        sample_steps=np.asarray(sample_steps, dtype=np.int64),
-        sample_times_s=np.asarray(sample_steps, dtype=np.float64) * dt_s,
-    )
+    potential = np.asarray(potential_V)
+    density = np.asarray(ion_density_m3)
+    common = {
+        "z_m": np.asarray(z_axis_m),
+        "sample_count": np.asarray(len(sample_steps), dtype=np.int64),
+        "sample_steps": np.asarray(sample_steps, dtype=np.int64),
+        "sample_times_s": np.asarray(sample_steps, dtype=np.float64) * dt_s,
+    }
+    if config.planes == ("xz",):
+        fields = {
+            "x_m": np.asarray(x_axis_m),
+            "potential_V": np.squeeze(potential, axis=0) if potential.ndim == 3 else potential,
+            "ion_density_m3": np.squeeze(density, axis=0) if density.ndim == 3 else density,
+        }
+        format_version = 1
+    else:
+        fields = {
+            "transverse_m": np.asarray(x_axis_m),
+            "plane_labels": np.asarray(config.planes),
+            "potential_V": potential,
+            "ion_density_m3": density,
+        }
+        format_version = 2
+    np.savez_compressed(npz_path, **common, **fields)
     document = {
-        "format_version": 1,
+        "format_version": format_version,
         "units": {
             "x_m": "m",
+            "transverse_m": "m",
             "z_m": "m",
             "potential_V": "V",
             "ion_density_m3": "m^-3",

@@ -365,6 +365,7 @@ class PlaneDiagnosticConfig:
     interval: int
     output_prefix: Path | str
     source_block_size: int = 4096
+    planes: tuple[Literal["xz", "yz"], ...] = ("xz",)
 
     def __post_init__(self) -> None:
         if self.nx < 2 or self.nz < 2:
@@ -374,6 +375,13 @@ class PlaneDiagnosticConfig:
             raise ValueError("start_step must be non-negative")
         if self.interval <= 0 or self.source_block_size <= 0:
             raise ValueError("interval and source_block_size must be positive")
+        if not self.planes:
+            raise ValueError("at least one diagnostic plane is required")
+        if len(set(self.planes)) != len(self.planes):
+            raise ValueError("diagnostic planes must be unique")
+        invalid = set(self.planes) - {"xz", "yz"}
+        if invalid:
+            raise ValueError(f"unsupported diagnostic planes: {sorted(invalid)}")
 
 
 @dataclass(frozen=True)

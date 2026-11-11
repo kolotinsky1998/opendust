@@ -388,6 +388,46 @@ def test_plane_diagnostics_are_averaged_and_written(tmp_path):
         np.testing.assert_array_equal(fields["sample_steps"], [1, 2])
 
 
+def test_two_plane_diagnostics_are_averaged_and_written(tmp_path):
+    simulation = SimulationConfigSI(
+        radius_m=1.0,
+        height_m=2.0,
+        particle_count=4,
+        steps=2,
+        dt_s=1.0e-5,
+        seed=6,
+        force_backend="jax",
+        step_chunk_size=2,
+    )
+    diagnostic = PlaneDiagnosticConfig(
+        nx=4,
+        nz=5,
+        slice_thickness_m=0.2,
+        start_step=1,
+        interval=1,
+        output_prefix=tmp_path / "planes",
+        source_block_size=2,
+        planes=("xz", "yz"),
+    )
+    warning_context = (
+        pytest.warns(RuntimeWarning, match="x64")
+        if not jax.config.x64_enabled
+        else _no_warning()
+    )
+    with warning_context:
+        result = OpenDustJAX(
+            plasma(),
+            simulation,
+            background=PolynomialBackgroundConfig(enabled=False),
+            diagnostics=diagnostic,
+        ).run()
+    with np.load(result.diagnostic_files[0]) as fields:
+        assert fields["potential_V"].shape == (2, 5, 4)
+        assert fields["ion_density_m3"].shape == (2, 5, 4)
+        np.testing.assert_array_equal(fields["plane_labels"], ["xz", "yz"])
+        np.testing.assert_array_equal(fields["sample_steps"], [1, 2])
+
+
 class _no_warning:
     def __enter__(self):
         return None

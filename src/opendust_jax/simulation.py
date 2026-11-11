@@ -303,11 +303,11 @@ class OpenDustJAX:
             dtype=jnp.float32,
         )
         if diagnostics is not None:
-            self._x_axis, self._z_axis = diagnostic_axes(
+            self._transverse_axis, self._z_axis = diagnostic_axes(
                 simulation.radius_m, simulation.height_m, diagnostics
             )
         else:
-            self._x_axis = self._z_axis = jnp.zeros((0,), jnp.float32)
+            self._transverse_axis = self._z_axis = jnp.zeros((0,), jnp.float32)
         # Keep compiled scan executables across run() calls.  Besides avoiding
         # needless recompilation in repeated production runs, this makes a
         # benchmark warm-up actually exclude JIT compilation from timing.
@@ -696,31 +696,48 @@ class OpenDustJAX:
             )
 
             def sample(_):
-                potential = plane_potential_snapshot_V(
-                    positions,
-                    self._x_axis,
-                    self._z_axis,
-                    self.superion_charge_C,
-                    self.screening_length_m,
-                    self.softening_m,
-                    self._background_coefficients,
-                    source_block_size=self.diagnostics.source_block_size,
-                )
-                if isinstance(self.background, CylindricalSplineBackground):
-                    xx, zz = jnp.meshgrid(self._x_axis, self._z_axis, indexing="xy")
-                    targets = jnp.stack(
-                        (xx.ravel(), jnp.zeros(xx.size, jnp.float32), zz.ravel()),
-                        axis=1,
+                potentials = []
+                densities = []
+                for plane in self.diagnostics.planes:
+                    potential = plane_potential_snapshot_V(
+                        positions,
+                        self._transverse_axis,
+                        self._z_axis,
+                        self.superion_charge_C,
+                        self.screening_length_m,
+                        self.softening_m,
+                        self._background_coefficients,
+                        plane=plane,
+                        source_block_size=self.diagnostics.source_block_size,
                     )
-                    background_potential, _ = self.background.potential_and_gradient(targets)
-                    potential = potential + background_potential.reshape(potential.shape)
-                density = plane_cic_density_snapshot_m3(
-                    positions,
-                    self._x_axis,
-                    self._z_axis,
-                    self.diagnostics.slice_thickness_m,
-                    self.superion_weight,
-                )
+                    if isinstance(self.background, CylindricalSplineBackground):
+                        tt, zz = jnp.meshgrid(
+                            self._transverse_axis, self._z_axis, indexing="xy"
+                        )
+                        zeros = jnp.zeros(tt.size, jnp.float32)
+                        targets = (
+                            jnp.stack((tt.ravel(), zeros, zz.ravel()), axis=1)
+                            if plane == "xz"
+                            else jnp.stack((zeros, tt.ravel(), zz.ravel()), axis=1)
+                        )
+                        background_potential, _ = self.background.potential_and_gradient(
+                            targets
+                        )
+                        potential = potential + background_potential.reshape(
+                            potential.shape
+                        )
+                    density = plane_cic_density_snapshot_m3(
+                        positions,
+                        self._transverse_axis,
+                        self._z_axis,
+                        self.diagnostics.slice_thickness_m,
+                        self.superion_weight,
+                        plane=plane,
+                    )
+                    potentials.append(potential)
+                    densities.append(density)
+                potential = jnp.stack(potentials)
+                density = jnp.stack(densities)
                 return (
                     carry.potential_sum + potential.astype(carry.potential_sum.dtype),
                     carry.density_sum + density.astype(carry.density_sum.dtype),
@@ -1304,7 +1321,7 @@ class OpenDustJAX:
 
         accumulator_dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
         grid_shape = (
-            (self.diagnostics.nz, self.diagnostics.nx)
+            (len(self.diagnostics.planes), self.diagnostics.nz, self.diagnostics.nx)
             if self.diagnostics is not None else (0, 0)
         )
         initial_pair_force, initial_coincident = self._pair_force(state.positions_m)
@@ -1458,7 +1475,7 @@ class OpenDustJAX:
             )
             diagnostic_files = write_plane_diagnostics(
                 self.diagnostics,
-                np.asarray(jax.device_get(self._x_axis)),
+                np.asarray(jax.device_get(self._transverse_axis)),
                 np.asarray(jax.device_get(self._z_axis)),
                 np.asarray(host_carry.potential_sum) / sample_count,
                 np.asarray(host_carry.density_sum) / sample_count,
